@@ -1,0 +1,38 @@
+[project]
+name = "mini-erp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.2.7",
+    "django-stubs>=5.2.7",
+    "djangorestframework>=3.16.1",
+    "mypy>=1.18.2",
+    "psycopg[binary]>=3.2.12",
+    "python-dotenv>=1.2.1",
+    "ruff>=0.14.3",
+    "uvicorn>=0.38.0",
+]
+
+[tool.ruff]
+lint.select = ["I"]  # Enable all imported rules
+line-length = 100
+target-version = "py312"
+
+# Sort
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-wrap-aliases = true
+
+# Formater
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main"]
+
+[tool.django-stubs]
+django_settings_module = "core.settings"
