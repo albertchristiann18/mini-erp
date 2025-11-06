@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+import environ  # type: ignore
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -18,15 +20,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
+env = environ.Env(
+    DEBUG=(bool, True),
+    SECRET_KEY=(str, ""),
+    ALLOWED_HOSTS=(list, []),
+    PGHOST=(str, ""),
+    PGPORT=(str, ""),
+    PGUSER=(str, ""),
+    PGPASSWORD=(str, ""),
+    PGDATABASE=(str, ""),
+)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-m*iz09j))xazxof7%asha8gwvx%$603k8%6*9_e+5-9z2k3uhi'
+environ.Env.read_env(os.path.join(BASE_DIR.parent, ".env"))
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
+SECRET_KEY = env("SECRET_KEY")
+DEBUG = env("DEBUG")
+ALLOWED_HOSTS: list[str] = env("ALLOWED_HOSTS")
 
 # Application definition
 
@@ -76,11 +85,11 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "mini-erp",
-        "USER": "postgres",
-        "PASSWORD": "postgres",
-        "HOST": "localhost",  # Docker publishes to host
-        "PORT": "5432",
+        "NAME": env("PGDATABASE"),
+        "USER": env("PGUSER"),
+        "PASSWORD": env("PGPASSWORD"),
+        "HOST": env("PGHOST"),
+        "PORT": env("PGPORT"),
     }
 }
 
