@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# Get changed files compared to master branch
+mypy --config-file mypy.ini .
+
+# export DIFF_FILES=$(git diff --name-only --diff-filter=ACM $(git merge-base HEAD origin/master) | grep "\.py" | grep -v "settings" | grep -v "migrations")
+#
+# if [[ ! -z $DIFF_FILES ]]
+# then
+#     echo "Running mypy on changed files:" $DIFF_FILES
+#     mypy --config-file mypy.ini $DIFF_FILES
+# fi

@@ -10,11 +10,13 @@ dependencies = [
     "django-stubs>=5.2.7",
     "djangorestframework>=3.16.1",
     "mypy>=1.18.2",
+    "pre-commit>=4.3.0",
     "psycopg[binary]>=3.2.12",
     "pytest>=8.4.2",
     "pytest-django>=4.11.1",
     "python-dotenv>=1.2.1",
     "ruff>=0.14.3",
+    "sqlparse>=0.5.3",
     "uvicorn>=0.38.0",
 ]
 
@@ -22,6 +24,7 @@ dependencies = [
 lint.select = ["I"]  # Enable all imported rules
 line-length = 100
 target-version = "py312"
+exclude = ["migrations", "__pycache__", "pyproject.toml"]
 
 # Sort
 [tool.ruff.lint.isort]
@@ -39,3 +42,6 @@ plugins = ["mypy_django_plugin.main"]
 
 [tool.django-stubs]
 django_settings_module = "core.settings"
+
+[tool.uv]
+link-mode = "copy"

@@ -1,0 +1,24 @@
+default_stages: [pre-commit]
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: ruff
+        args: [
+          '--fix',
+          '--config', 'pyproject.toml',
+          '--select', 'I'
+        ]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: bash ./run-mypy
+        language: system
+        types: [python]
+        pass_filenames: false
