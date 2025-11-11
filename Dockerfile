@@ -9,19 +9,16 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl
 
 # Install uv
-RUN pip install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Copy project files
 COPY pyproject.toml uv.lock* ./
 
 # Install dependencies using uv
-RUN uv pip install -r pyproject.toml
+RUN uv sync --frozen
 
 # Copy project
 COPY . .
