@@ -19,68 +19,65 @@ Make sure these are installed before you start:
 
 ---
 
-## ⚙️ Setup Instructions
+## ⚙️ Setup (Development)
 
-### 1️⃣ Clone the project
-```bash
-git clone https://github.com/<your-username>/mini-erp.git
-cd mini-erp
-````
+### 1️⃣ Create your `.env` file
 
----
-
-### 2️⃣ Start PostgreSQL (via Docker)
-
-Run this to start your local database container:
-
-```bash
-docker compose up -d
-```
-
-This command will:
-
-* Pull the official **PostgreSQL 16** image (if not already downloaded)
-* Start a container named `mini-erp-db`
-* Expose PostgreSQL on port **5433**
-
-You can verify it's running:
-
-```bash
-docker ps
-```
-
----
-
-### 3️⃣ Create your environment file
-
-Copy the example `.env.example` and rename it to `.env`:
+Copy the example file:
 
 ```bash
 cp .env.example .env
 ```
 
-This file contains your environment variables.
-By default, it looks like this:
+Your `.env` file should look similar to:
 
 ```
-DJANGO_SETTINGS_MODULE='core.settings'
+# Django
+DJANGO_SETTINGS_MODULE=core.settings
 SECRET_KEY=dev-change-me
 DEBUG=true
 ALLOWED_HOSTS=127.0.0.1,localhost
-PGHOST=localhost
-PGPORT=5433
-PGUSER=postgres
-PGPASSWORD=postgres
-PGDATABASE=mini_erp
-```
 
-You can adjust the values if needed.
+# Database (LOCAL Django → Docker Postgres)
+DB_NAME=mini_erp
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=localhost
+DB_PORT=5433
+
+# Initial superuser (auto-created by migrate service)
+DJANGO_SUPERUSER_USERNAME=admin
+DJANGO_SUPERUSER_EMAIL=admin@example.com
+DJANGO_SUPERUSER_PASSWORD=changeme123
+```
 
 ---
 
-### 4️⃣ Set up dependencies with uv
+### 2️⃣ Start PostgreSQL via Docker
 
-Install all Python dependencies and create the `.venv` automatically:
+```bash
+docker compose up -d
+```
+
+This will:
+
+* Start the **Postgres** container
+* Run the **migrate** service
+* Apply all Django migrations
+* Automatically create a superuser
+  (based on values inside `.env`)
+
+You do **NOT** need to run migrations manually.
+
+You can confirm everything ran:
+
+```bash
+docker compose logs migrate
+```
+
+---
+
+### 3️⃣ Install Python dependencies with uv
 
 ```bash
 uv sync
@@ -88,70 +85,40 @@ uv sync
 
 This will:
 
-* Create a local virtual environment (`.venv/`)
-* Install Django, psycopg, django-environ, ruff, mypy, pytest, etc.
-* Ensure your project environment is fully reproducible
-
-If you add a new package later, use:
-
-```bash
-uv add <package-name>
-```
-
-Example:
-
-```bash
-uv add djangorestframework
-```
+* Create a `.venv/`
+* Install all project dependencies
+* Make the environment ready
 
 ---
 
-### 5️⃣ Apply database migrations
-
-Run Django migrations to initialize your database schema:
-
-```bash
-uv run python manage.py migrate
-```
-
-Then create an admin user for the Django admin panel:
-
-```bash
-uv run python manage.py createsuperuser
-```
-
----
-
-### 6️⃣ Run the development server
-
-Now you can start the backend:
+### 4️⃣ Run the backend (Django) locally
 
 ```bash
 uv run python manage.py runserver
 ```
 
-The app will start at:
+Backend URL:
 👉 [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
 
-You can log in to the admin panel at:
+Admin panel:
 👉 [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)
-
-Use the superuser credentials you just created.
+(**login using the auto-created superuser from `.env`**)
 
 ---
-### 7️⃣ Run tests
 
-To verify everything works correctly:
+## 🎉 Development Setup Complete
 
-```bash
-uv run pytest -q
-```
+Your environment now includes:
 
-You can also run a specific test file:
+✔ PostgreSQL running in Docker
+✔ Migrations automatically applied
+✔ Superuser automatically created
+✔ Django running locally with uv
 
-```bash
-uv run pytest inventory/tests/test_fifo.py -v
-```
+If you want, I can also generate a **Production README** or include sections for:
 
-If all tests pass — your setup is complete 🎉
-
+* test instructions
+* API documentation
+* ERD diagrams
+* pre-commit setup
+  Just let me know!
