@@ -1,0 +1,61 @@
+# .gitlab-ci.yml
+# Code quality pipeline for a Django project using uv, Ruff, and Mypy.
+
+stages:
+  - quality
+
+# ---- Global defaults / cache ----
+variables:
+  PYTHONUNBUFFERED: "1"
+  DJANGO_SETTINGS_MODULE: "core.settings"   # adjust if your settings module differs
+  UV_CACHE_DIR: ".cache/uv"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  CODE_DIR: "."                             # set to "src" if you use a src/ layout
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG:$CI_JOB_NAME"
+  paths:
+    - .venv/
+    - .cache/uv/
+    - .ruff_cache/
+    - .mypy_cache/
+
+# ---- Base job template: installs uv + deps once per job ----
+.uv-base:
+  image: python:3.12-slim
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git && rm -rf /var/lib/apt/lists/*
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv --version
+    # Install project dependencies (prefer lock; fall back to resolve)
+    - (uv sync --all-extras --dev --frozen) || uv sync --all-extras --dev
+
+# ---- Ruff: import order only (no autofix in CI) ----
+ruff-imports:
+  stage: quality
+  extends: .uv-base
+  script:
+    - uv run ruff check "$CODE_DIR" --select I --diff --config pyproject.toml
+
+# ---- Ruff: formatting check (no changes in CI) ----
+ruff-format:
+  stage: quality
+  extends: .uv-base
+  script:
+    - uv run ruff format "$CODE_DIR" --check
+
+# ---- Ruff: full lint (use your pyproject rules) ----
+ruff-lint:
+  stage: quality
+  extends: .uv-base
+  script:
+    - uv run ruff check "$CODE_DIR" --config pyproject.toml
+
+# ---- Mypy: static typing (Django) ----
+mypy:
+  stage: quality
+  extends: .uv-base
+  script:
+    # If you use django-stubs plugin, ensure mypy.ini config is present
+    - uv run mypy "$CODE_DIR" --config-file mypy.ini
