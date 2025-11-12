@@ -1,13 +1,11 @@
 # Django
 *.log
 *.pot
-# *.py[cod]
-# *$py.class
-# __pycache__/
-# .pytest_cache
 
 # Python-generated files
-# *.py[oc]
+*.py[oc]
+__pycache__/
+.pytest_cache/
 build/
 dist/
 wheels/
