@@ -1,3 +1,8 @@
-from django.shortcuts import render
+from django.http import JsonResponse
 
-# Create your views here.
+def api_root(request):
+    return JsonResponse({
+        "status": "ok",
+        "message": "Welcome to the mini-ERP API. Access documentation at /docs/.",
+        "endpoints": ["/admin/", "/api/inventory/"]
+    })
