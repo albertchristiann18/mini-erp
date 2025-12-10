@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-deployment
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage      # <--- VOLUME MOUNT NAME
+          mountPath: /var/lib/postgresql/data
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: mini-erp-db-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mini-erp-db-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          value: mini_erp
+      volumes:
+      - name: postgres-storage        # <--- MUST MATCH VOLUME MOUNT NAME ABOVE
+        persistentVolumeClaim:
+          claimName: postgres-pvc     # <--- NAME OF YOUR PVC DEFINED BELOW
+---
+# Service to expose the database internally to the Django app
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+# ... (rest of the Service definition remains the same) ...
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+# Persistent Volume Claim (PVC) to reserve storage space for the DB
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+# ... (rest of the PVC definition remains the same) ...
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
