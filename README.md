@@ -13,10 +13,11 @@ Make sure these are installed before you start:
 | Tool | Purpose | Link |
 |------|----------|------|
 | **Git** | Clone the repository | [git-scm.com](https://git-scm.com/) |
-| **Docker Desktop** | Database container (PostgreSQL) | [docker.com](https://www.docker.com/products/docker-desktop) |
+| **Docker Desktop** | Container runtime & Database container | [docker.com](https://www.docker.com/products/docker-desktop) |
 | **uv** | Python dependency & environment manager | [uv (Astral)](https://github.com/astral-sh/uv) |
 | **VS Code** *(recommended)* | Editor with Python/Django extensions | [code.visualstudio.com](https://code.visualstudio.com/) |
-
+| **Minikube** | Local Kubernetes environment | [minikube.sigs.k8s.io](https://minikube.sigs.k8s.io/docs/start/) |
+| **kubectl** | Command line tool for Kubernetes | [kubernetes.io/docs/reference/kubectl/](https://kubernetes.io/docs/reference/kubectl/) |
 ---
 
 ## ⚙️ Setup (Development)
@@ -106,26 +107,50 @@ Admin panel:
 
 ---
 
-## 🎉 Development Setup Complete
 
-Your environment now includes:
+## 🚀 Deployment (Minikube / Kubernetes Test)
 
-✔ PostgreSQL running in Docker
-✔ Migrations automatically applied
-✔ Superuser automatically created
-✔ Django running locally with uv
+This section details how to deploy the application into a local Kubernetes cluster (Minikube) using pre-built manifests and the included deployment script.
 
-If you want, I can also generate a **Production README** or include sections for:
+### 1️⃣ Ensure Minikube is Running
 
-* test instructions
-* API documentation
-* ERD diagrams
-* pre-commit setup
-  Just let me know!
+Before proceeding, make sure Minikube is started:
 
+```bash
+minikube start
+```
 
-kubernetes run
+### 2️⃣ Grant Execute Permission to the Deployment Script
+
+The `local_deploy.sh` script handles building the Docker image, setting the Minikube context, creating the Kubernetes Secret, and deploying all services.
+
+```bash
 chmod +x local_deploy.sh
+```
 
+### 3️⃣ Run the Kubernetes Deployment
 
+This single script command performs the entire build and deployment process:
+
+```bash
 ./local_deploy.sh
+```
+
+**What this script does:**
+
+1.  Sets your local Docker client to build inside the Minikube VM's image registry.
+2.  Builds the optimized multi-stage Docker image (`mini-erp-uv:v1`).
+3.  Creates a Kubernetes Secret (`mini-erp-db-secret`) from your `.env` file.
+4.  Deploys the PostgreSQL database (via `k8s/postgres.yaml`).
+5.  Deploys the Django application (via `k8s/django-app.yaml`).
+      * **Crucially:** The application container runs the `entrypoint-k8s.sh` script, which automatically **waits for the database**, **runs migrations**, **creates the superuser**, and **starts the Gunicorn server**.
+
+### 4️⃣ Access the Application
+
+Once the script finishes, it will provide the final access URL. If you need to retrieve it manually:
+
+```bash
+minikube service django-app-service --url
+```
+
+-----
