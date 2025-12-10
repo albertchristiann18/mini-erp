@@ -4,6 +4,10 @@ set -euo pipefail
 echo "Applying migrations..."
 uv run python manage.py migrate --noinput
 
+# Optionally collectstatic (for prod / k8s)
+echo "Collecting static files..."
+uv run python manage.py collectstatic --noinput
+
 # Optional: collectstatic if you want (safe for dev)
 # echo "Collecting static files..."
 # python manage.py collectstatic --noinput --clear

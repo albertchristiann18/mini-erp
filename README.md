@@ -122,3 +122,10 @@ If you want, I can also generate a **Production README** or include sections for
 * ERD diagrams
 * pre-commit setup
   Just let me know!
+
+
+kubernetes run
+chmod +x local_deploy.sh
+
+
+./local_deploy.sh
