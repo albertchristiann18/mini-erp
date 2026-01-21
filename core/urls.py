@@ -18,14 +18,21 @@ Including another URLconf
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
-from inventory import views
+from core import views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", views.api_root, name="api-root"),
+    path("", include("apps.inventory.urls")),
 ]
+
+router = DefaultRouter()
+router.register(r"company", views.CompanyViewSet)
+router.register(r"marketplace", views.MarketplaceViewSet)
+
+urlpatterns += router.urls
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)  # type: ignore[arg-type]

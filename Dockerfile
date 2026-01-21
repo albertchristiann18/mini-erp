@@ -3,10 +3,10 @@
 # -----------------------------------------------------
 FROM python:3.12-slim AS builder
 
+WORKDIR /app
+
 # 1. Install uv binary
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
-
-WORKDIR /app
 
 # Optimization Flags for uv
 ENV UV_COMPILE_BYTECODE=1 \
@@ -25,7 +25,7 @@ COPY . .
 # Install the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
-    
+
 # -----------------------------------------------------
 # STAGE 2: RUNTIME (Production-ready image)
 # -----------------------------------------------------
@@ -49,11 +49,17 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     DJANGO_SETTINGS_MODULE="core.settings"
 
+
+# RUN apt-get update && apt-get install -y dos2unix
+
+# # Fix the line endings and make executable
+# RUN dos2unix /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
 # Make entrypoint scripts executable
 RUN chmod +x /app/entrypoint.sh /app/entrypoint-k8s.sh
 
 # Default ENTRYPOINT for Kubernetes deployment (Uses the script tailored for K8s)
-ENTRYPOINT ["/app/entrypoint-k8s.sh"]
+ENTRYPOINT [ "/app/entrypoint.sh"]
 
 # Default CMD (Used if no custom command is passed, but entrypoint-k8s.sh takes over)
 CMD ["gunicorn", "core.wsgi:application", "--bind", "0.0.0.0:8000"]

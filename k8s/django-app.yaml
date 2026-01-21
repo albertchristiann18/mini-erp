@@ -18,6 +18,7 @@ spec:
       - name: django-app
         image: mini-erp-uv:v1 # Local image built by local_deploy.sh
         imagePullPolicy: Never # Crucial: forces K8s to use the local image
+        args: ["k8s"]
         ports:
         - containerPort: 8000
         env:

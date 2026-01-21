@@ -3,6 +3,7 @@
 
 stages:
   - quality
+  - test
 
 # ---- Global defaults / cache ----
 variables:
@@ -11,6 +12,7 @@ variables:
   UV_CACHE_DIR: ".cache/uv"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   CODE_DIR: "."                             # set to "src" if you use a src/ layout
+  SECRET_KEY: "ci-change-me"            # dummy secret for CI runs
 
 cache:
   key: "$CI_COMMIT_REF_SLUG:$CI_JOB_NAME"
@@ -59,3 +61,28 @@ mypy:
   script:
     # If you use django-stubs plugin, ensure mypy.ini config is present
     - uv run mypy "$CODE_DIR" --config-file mypy.ini
+
+# ---- Unit Tests Job ----
+pytest:
+  stage: test
+  extends: .uv-base
+  services:
+    - name: postgres:15-alpine
+      alias: db_test  # Changed this to match your Django logic
+  variables:
+    # Match these to what your Django settings expect
+    DB_NAME: "postgres"
+    DB_USER: "postgres"
+    DB_PASSWORD: "password"
+    DB_HOST: "db_test" # This MUST match the 'alias' above
+    DB_PORT: "5432"
+    # This tells the postgres service how to start
+    POSTGRES_DB: "postgres"
+    POSTGRES_PASSWORD: "password"
+  before_script:
+    # Postgres drivers (psycopg2) usually need libpq-dev to install on slim images
+    - apt-get update && apt-get install -y libpq-dev gcc
+    - !reference [.uv-base, before_script]
+  script:
+      - uv sync --all-extras --dev --frozen
+      - uv run pytest

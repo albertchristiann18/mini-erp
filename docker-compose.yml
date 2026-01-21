@@ -23,6 +23,9 @@ services:
 
   migrate:
     container_name: migration
+    volumes:
+      - .:/app
+      - /app/.venv
     build: .
     env_file:
       - .env
@@ -33,6 +36,7 @@ services:
       db:
         condition: service_healthy
     restart: "no"
+    entrypoint: [ "bash", "/app/entrypoint.sh" ]
 
 volumes:
   postgres_data:
