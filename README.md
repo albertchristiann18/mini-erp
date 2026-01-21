@@ -95,7 +95,7 @@ This will:
 ### 4️⃣ Run the backend (Django) locally
 
 ```bash
-uv run python manage.py runserver
+uv run manage.py runserver
 ```
 
 Backend URL:
@@ -154,3 +154,9 @@ minikube service django-app-service --url
 ```
 
 -----
+
+
+### run unit test locally
+```
+docker compose -f docker-compose.test.yml run --rm test uv run pytest --reuse-db
+```

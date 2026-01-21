@@ -20,7 +20,7 @@ for attempt in range(max_retries):
         s.close()
         print("Database connection successful!")
         sys.exit(0)  # Success
-    except socket.error as ex:
+    except socket.error:
         if attempt < max_retries - 1:
             print(
                 f"Waiting for DB (Attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds..."
