@@ -156,7 +156,16 @@ minikube service django-app-service --url
 -----
 
 
-### run unit test locally
+### Run Unit Tests
+
+There are two ways to run unit tests:
+
+#### 1. Locally (using local database)
+```bash
+uv run pytest
 ```
+
+#### 2. Using Docker (isolated environment)
+```bash
 docker compose -f docker-compose.test.yml run --rm test uv run pytest --reuse-db
 ```
