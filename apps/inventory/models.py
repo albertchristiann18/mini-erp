@@ -272,7 +272,7 @@ class ProductCogs(DefaultModel):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["purchase_date"]
+        ordering = ["-purchase_date"]
 
 
 class ProductVariantMarketplace(DefaultModel):
@@ -299,3 +299,26 @@ class ProductVariantMarketplace(DefaultModel):
 
     class Meta:
         unique_together = ["product_variant", "marketplace"]
+
+
+class StockMovement(DefaultModel):
+    class MovementType(models.TextChoices):
+        PURCHASE = "PUR", "Purchase Order"
+        INBOUND = "IN", "Inbound (Purchase/Restock)"
+        OUTBOUND = "OUT", "Outbound (Sales)"
+        ADJUSTMENT = "ADJ", "Stock Adjustment (Manual)"
+        TRANSFER = "TRF", "Warehouse Transfer"
+        RETURN = "RET", "Customer Return"
+
+    id = ULIDField(primary_key=True, default=default, editable=False, db_column="stock_movement_id")
+    product_variant = models.ForeignKey(ProductVariant, on_delete=models.PROTECT)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    movement_type = models.CharField(max_length=3, choices=MovementType.choices)
+    quantity = models.IntegerField()  # Use positive for IN, negative for OUT
+    reference_number = models.CharField(max_length=100, blank=True, null=True)  # PO# or Order ID
+    note = models.TextField(blank=True, null=True)
+    balance_before = models.IntegerField()
+    balance_after = models.IntegerField()
+
+    class Meta:
+        ordering = ["-cdate"]
