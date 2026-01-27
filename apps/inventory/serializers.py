@@ -1,6 +1,5 @@
 from typing import Any
 
-from django.db import transaction
 from rest_framework import serializers
 
 from apps.inventory.models import (
@@ -107,7 +106,7 @@ class VariantCreateSerializer(serializers.ModelSerializer):
         model = ProductVariant
         fields = [
             "name",
-            "sku_variant_code",
+            # "sku_variant_code",
             "variant_values",
             "base_price",
             "marketplace_listings",
@@ -145,33 +144,3 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         if not Category.objects.filter(id=value).exists():
             raise serializers.ValidationError("Category not found")
         return value
-
-    def create(self, validated_data: dict) -> Product:
-        # 1. Extract nested data
-        variants_data = validated_data.pop("variants")
-
-        # 2. Extract company (assuming it's passed in the request)
-        company_id = validated_data.get("company_id", "")
-
-        with transaction.atomic():
-            # 3. Create the Parent Product
-            # The DB trigger 'trg_generate_sku' fires here!
-            product = Product.objects.create(**validated_data)
-
-            for variant_data in variants_data:
-                # 4. Extract marketplace nested data
-                listings_data = variant_data.pop("marketplace_listings")
-
-                # 5. Create the ProductVariant
-                # The DB trigger 'trg_generate_variant_sku' fires here!
-                variant = ProductVariant.objects.create(
-                    product=product, company_id=company_id, **variant_data
-                )
-
-                # 6. Create the Marketplace Listings
-                for listing_data in listings_data:
-                    ProductVariantMarketplace.objects.create(
-                        product_variant=variant, company_id=company_id, **listing_data
-                    )
-
-            return product

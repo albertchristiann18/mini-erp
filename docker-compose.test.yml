@@ -20,6 +20,8 @@ services:
       context: .
       # MAGIC PART: This tells Docker to use Stage 1 (Builder)
       target: builder
+    volumes:
+      - .:/app
     environment:
       - DJANGO_SETTINGS_MODULE=core.settings
       - SECRET_KEY=dev-change-me
@@ -31,6 +33,7 @@ services:
       - DB_PASSWORD=password
       - DB_HOST=db_test
       - DB_PORT=5432
+      - PYTHONDONTWRITEBYTECODE=1
     # We override the entrypoint to install dev dependencies and run pytest
     # 'uv sync' (without --no-dev) will pull in pytest quickly
     entrypoint: [] 

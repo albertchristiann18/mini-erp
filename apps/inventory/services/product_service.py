@@ -1,81 +1,68 @@
-# # inventory/services/product_service.py
-# from django.db import transaction
+from django.db import transaction
 
-# from inventory.models import (
-#     Category,
-#     Product,
-#     ProductVariant,
-#     ProductVariantMarketplace,
-#     ProductVariantWarehouse,
-# )
+from apps.inventory.models import (
+    Product,
+    ProductVariant,
+    ProductVariantMarketplace,
+)
 
 
-# class ProductService:
-#     @staticmethod
-#     @transaction.atomic
-#     def create_product_with_variants(product_data, variants_data, marketplaces=None):
-#         """
-#         Create a product with all its variants and marketplace listings
+class ProductService:
+    @transaction.atomic
+    def create_product_with_variants(self, validated_data: list) -> None:
+        company_id = validated_data[0].get("company_id", "")
 
-#         Args:
-#             product_data: dict with product fields
-#             variants_data: list of dicts with variant fields
-#             marketplaces: list of Marketplace objects to list on
+        # with transaction.atomic():
+        products = [
+            Product(
+                company_id=company_id,
+                category_id=data.get("category_id", ""),
+                name=data.get("name", ""),
+                description=data.get("description", ""),
+                specifications=data.get("specifications", {}),
+                weight=data.get("weight", 0),
+                length=data.get("length", 0),
+                width=data.get("width", 0),
+                height=data.get("height", 0),
+            )
+            for data in validated_data
+        ]
+        created_products = Product.objects.bulk_create(products, batch_size=100)
 
-#         Returns:
-#             Product instance
-#         """
+        product_index_map = {i: obj.id for i, obj in enumerate(created_products)}
 
-#         # 1. Create product
-#         product = Product.objects.create(
-#             name=product_data["name"],
-#             sku_code=product_data["sku_code"],
-#             description=product_data.get("description", ""),
-#             total_qty=0,
-#             total_cogs=0,
-#         )
+        listings_data_tupple = []
+        variants = []
+        variant_index = 0
+        for i in range(len(validated_data)):
+            data = validated_data[i]
+            variants_data = data.pop("variants")
+            for variant_data in variants_data:
+                for listing_data in variant_data["marketplace_listings"]:
+                    listings_data_tupple.append((variant_index, listing_data))
 
-#         # 2. Create variants
-#         for variant_data in variants_data:
-#             variant = ProductVariant.objects.create(
-#                 product=product,
-#                 name=variant_data["name"],
-#                 sku_variant_code=variant_data["sku_variant_code"],
-#                 selling_price=variant_data["selling_price"],
-#                 current_cogs=0,
-#                 total_incoming_qty=0,
-#                 total_outgoing_qty=0,
-#                 total_available_qty=0,
-#             )
+                variants.append(
+                    ProductVariant(
+                        product_id=product_index_map[i],
+                        company_id=company_id,
+                        name=variant_data.get("name", ""),
+                        variant_values=variant_data.get("variant_values", {}),
+                        base_price=variant_data.get("base_price", 0),
+                    )
+                )
+                variant_index += 1
 
-#             # 3. Create warehouse stock entries (optional)
-#             if "warehouses" in variant_data:
-#                 for warehouse in variant_data["warehouses"]:
-#                     ProductVariantWarehouse.objects.create(
-#                         product_variant=variant,
-#                         warehouse=warehouse,
-#                         incoming_qty=0,
-#                         outgoing_qty=0,
-#                         physical_stock=0,
-#                         checkout_qty=0,
-#                     )
-
-#             # 4. Create marketplace listings (optional)
-#             if marketplaces:
-#                 for marketplace in marketplaces:
-#                     ProductVariantMarketplace.objects.create(
-#                         product_variant=variant, marketplace=marketplace, is_active=True
-#                     )
-
-#         return product
-
-#     @staticmethod
-#     @transaction.atomic
-#     def create_simple_product(name, sku_code, description=""):
-#         """Create a basic product without variants (for simple use cases)"""
-
-#         product = Product.objects.create(
-#             name=name, sku_code=sku_code, description=description, total_qty=0, total_cogs=0
-#         )
-
-#         return product
+        created_variants = ProductVariant.objects.bulk_create(variants, batch_size=100)
+        variant_index_map = {i: obj.id for i, obj in enumerate(created_variants)}
+        create_listing_data = []
+        for i, listing_data in listings_data_tupple:
+            create_listing_data.append(
+                ProductVariantMarketplace(
+                    product_variant_id=variant_index_map[i],
+                    company_id=company_id,
+                    marketplace_id=listing_data["marketplace_id"],
+                    selling_price=listing_data["selling_price"],
+                    discounted_price=listing_data.get("discounted_price"),
+                )
+            )
+        ProductVariantMarketplace.objects.bulk_create(create_listing_data, batch_size=100)
