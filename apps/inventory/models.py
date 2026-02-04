@@ -1,15 +1,16 @@
 from typing import Any
 
 from django.db import models
-from django_ulid.models import ULIDField, default
+from django_ulid.models import ULIDField
 
 from core.models import DefaultModel, Marketplace
+from core.utils import generate_ulid, get_default_shipping_config
 
 
 class Category(DefaultModel):
     """Product category"""
 
-    id = ULIDField(primary_key=True, default=default, editable=False, db_column="category_id")
+    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="category_id")
     name = models.CharField(max_length=255, unique=True)
     category_code = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
@@ -20,17 +21,24 @@ class Category(DefaultModel):
 
 
 class Product(DefaultModel):
-    """SKU-level summary (aggregated from all variants)"""
+    """
+    SKU-level summary (aggregated from all variants).
+    """
 
-    id = ULIDField(primary_key=True, default=default, editable=False, db_column="product_id")
+    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="product_id")
     category = models.ForeignKey(Category, on_delete=models.CASCADE, related_name="products")
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
-    sku_code = models.CharField(max_length=100, unique=True, editable=False)
+    # SKU CODE auto-generated format: {CATEGORY_CODE}-{SEQUENCE_NUMBER} (e.g., KEMEJA-001, KEMEJA-002)
+    sku_code = models.CharField(
+        max_length=100,
+        unique=True,
+        editable=False,
+    )
 
     # Summary fields (calculated from all ProductVariants)
-    total_qty = models.BigIntegerField(default=0)  # Sum of all variant.total_available_qty
-    total_cogs = models.BigIntegerField(default=0)  # Sum of all variant COGS value
+    total_qty = models.IntegerField(default=0)  # Sum of all variant.total_available_qty
+    total_cogs = models.IntegerField(default=0)  # Sum of all variant COGS value
     # Note: No total_selling_price here - price varies by marketplace!
 
     # Stores the structure: [{"name": "Warna", "order": 1}, {"name": "Size", "order": 2}]
@@ -39,121 +47,16 @@ class Product(DefaultModel):
     # This will store: {"Bahan": ["Katun", "Bulu Domba"], "Motif": ["Batik"]}
     specifications = models.JSONField(default=dict, blank=True)
 
-    # Image 4: "Pengiriman" - Usually stays at Product level unless variants differ in size
-    weight = models.PositiveIntegerField(default=0)
-    length = models.PositiveIntegerField(default=0)
-    width = models.PositiveIntegerField(default=0)
-    height = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
+    # TODO handling multiple photos per product and assigned the first photo to be shown
+    # TODO handling videos per product
+    product_photo = models.FileField(upload_to="products/photos/", null=True, blank=True)
 
-    @staticmethod
-    def get_default_shipping_config() -> dict:
-        return {
-            "insurance": {"is_required": False, "fee_type": "percentage"},
-            "general": {
-                "reguler": {
-                    "cod": True,
-                    "expeditions": [
-                        {
-                            "code": "anteraja_reguler",
-                            "name": "Anteraja Reguler",
-                            "is_active": False,
-                        },
-                        {"code": "id_express", "name": "ID Express", "is_active": False},
-                        {"code": "jne", "name": "JNE Reguler", "is_active": False},
-                        {"code": "ninja_xpress", "name": "Ninja Xpress", "is_active": False},
-                        {"code": "pos_reguler", "name": "Pos Reguler", "is_active": False},
-                        {"code": "sicepat", "name": "SiCepat REG", "is_active": False},
-                        {"code": "jnt", "name": "J&T Express", "is_active": False},
-                        {"code": "express", "name": "Express", "is_active": False},
-                    ],
-                },
-                "instant": {
-                    "cod": False,
-                    "expeditions": [
-                        {"code": "grab", "name": "GrabExpress", "is_active": False},
-                        {"code": "gojek", "name": "GoSend Instant", "is_active": False},
-                    ],
-                },
-                "instant_priority": {
-                    "cod": False,
-                    "expeditions": [
-                        {
-                            "code": "grab",
-                            "name": "GrabExpress Instant Prioritas",
-                            "is_active": False,
-                        },
-                        {"code": "gojek", "name": "GoSend Instant Prioritas", "is_active": False},
-                    ],
-                },
-                "cargo": {
-                    "cod": False,
-                    "expeditions": [
-                        {"code": "anteraja_cargo", "name": "Anteraja Cargo", "is_active": False},
-                        {
-                            "code": "anteraja_economy",
-                            "name": "Anteraja Economy",
-                            "is_active": False,
-                        },
-                        {"code": "jnt", "name": "J&T Cargo", "is_active": False},
-                        {"code": "jne", "name": "JNE Trucking (JTR)", "is_active": False},
-                        {"code": "sentral_cargo", "name": "Sentral Cargo", "is_active": False},
-                        {"code": "sicepat_gokil", "name": "Sicepat Gokil", "is_active": False},
-                        {"code": "sicepat_halu", "name": "SiCepat Halu", "is_active": False},
-                        {"code": "express_eco", "name": "Express Eco", "is_active": False},
-                    ],
-                },
-                "sameday": {
-                    "cod": False,
-                    "expeditions": [
-                        {"code": "anteraja", "name": "Anteraja Sameday", "is_active": False},
-                        {"code": "grab", "name": "GrabExpress Sameday", "is_active": False},
-                        {"code": "gojek", "name": "GoSend Same Day", "is_active": False},
-                    ],
-                },
-                "nextday": {
-                    "cod": False,
-                    "expeditions": [
-                        {"code": "jne", "name": "JNE YES", "is_active": False},
-                        {"code": "sicepat", "name": "Sicepat BEST", "is_active": False},
-                    ],
-                },
-            },
-            "marketplaces": {
-                "Shopee": {
-                    "reguler": {
-                        "expeditions": [
-                            {"code": "spx_standard", "name": "SPX Standard", "is_active": False}
-                        ]
-                    },
-                    "cargo": {
-                        "expeditions": [
-                            {"code": "spx_hemat", "name": "SPX Hemat", "is_active": False}
-                        ]
-                    },
-                    "instant": {
-                        "expeditions": [
-                            {"code": "spx_instant", "name": "SPX Instant", "is_active": False}
-                        ]
-                    },
-                    "instant_priority": {
-                        "expeditions": [
-                            {
-                                "code": "spx_instant_prio",
-                                "name": "SPX Instant Prioritas",
-                                "is_active": False,
-                            }
-                        ]
-                    },
-                    "sameday": {
-                        "expeditions": [
-                            {"code": "spx_sameday", "name": "SPX Sameday", "is_active": False}
-                        ]
-                    },
-                },
-                "Tokopedia_TikTok": {"use_general_config": True},
-            },
-        }
+    # Image 4: "Pengiriman" - Usually stays at Product level unless variants differ in size
+    weight = models.IntegerField(default=0)
+    length = models.IntegerField(default=0)
+    width = models.IntegerField(default=0)
+    height = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
 
     # New Shipping Configuration field
     shipping_config = models.JSONField(
@@ -184,14 +87,20 @@ class Product(DefaultModel):
 
 
 class ProductVariant(DefaultModel):
-    """Variant of a product (e.g., size, color) - the actual inventory unit"""
+    """
+    Variant of a product (e.g., size, color) - the actual inventory unit.
+    """
 
     id = ULIDField(
-        primary_key=True, default=default, editable=False, db_column="product_variant_id"
+        primary_key=True, default=generate_ulid, editable=False, db_column="product_variant_id"
     )
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="variants")
     name = models.CharField(max_length=255)
-    sku_variant_code = models.CharField(max_length=100, unique=True)
+    # SKU CODE auto-generated format: {PARENT_SKU}-{VARIANT_VALUE_1}-{VARIANT_VALUE_2} (e.g., KEMEJA-001-NAVY-L, KEMEJA-001-RED-M)
+    sku_variant_code = models.CharField(
+        max_length=100,
+        unique=True,
+    )
 
     # Stores the values mapped to the order: {"1": "Merah", "2": "100"}
     # This matches the 'order' in the Product.variant_options
@@ -216,7 +125,9 @@ class ProductVariant(DefaultModel):
 
 
 class Warehouse(DefaultModel):
-    id = ULIDField(primary_key=True, default=default, editable=False, db_column="warehouse_id")
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="warehouse_id"
+    )
 
     name = models.CharField(max_length=255)
     address = models.TextField(blank=True, null=True)
@@ -228,7 +139,10 @@ class ProductVariantWarehouse(DefaultModel):
     """Stock of each variant in each warehouse"""
 
     id = ULIDField(
-        primary_key=True, default=default, editable=False, db_column="product_variant_warehouse_id"
+        primary_key=True,
+        default=generate_ulid,
+        editable=False,
+        db_column="product_variant_warehouse_id",
     )
     product_variant = models.ForeignKey(
         ProductVariant, on_delete=models.CASCADE, related_name="warehouse_stocks"
@@ -258,7 +172,9 @@ class ProductVariantWarehouse(DefaultModel):
 class ProductCogs(DefaultModel):
     """FIFO inventory layers per variant per warehouse"""
 
-    id = ULIDField(primary_key=True, default=default, editable=False, db_column="product_cogs_id")
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="product_cogs_id"
+    )
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
 
@@ -280,7 +196,7 @@ class ProductVariantMarketplace(DefaultModel):
 
     id = ULIDField(
         primary_key=True,
-        default=default,
+        default=generate_ulid,
         editable=False,
         db_column="product_variant_marketplace_id",
     )
@@ -310,7 +226,9 @@ class StockMovement(DefaultModel):
         TRANSFER = "TRF", "Warehouse Transfer"
         RETURN = "RET", "Customer Return"
 
-    id = ULIDField(primary_key=True, default=default, editable=False, db_column="stock_movement_id")
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="stock_movement_id"
+    )
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.PROTECT)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=3, choices=MovementType.choices)

@@ -1,0 +1,145 @@
+from decimal import Decimal
+
+from django.db import models
+from django_ulid.models import ULIDField
+
+from apps.inventory.models import ProductVariant, Warehouse
+from core.models import DefaultModel
+from core.utils import generate_ulid, round_decimal
+
+# Create your models here.
+
+
+class PurchaseOrder(DefaultModel):
+    """
+    Purchase Order for restocking inventory.
+    """
+
+    class POStatus(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ORDERED = "ORDERED", "Ordered"
+        SHIPPED = "SHIPPED", "In Transit"
+        DELIVERED = "DELIVERED", "Delivered at Warehouse"
+        COMPLETED = "COMPLETED", "Completed"
+
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="purchase_order_id"
+    )
+    # PO Number auto-generated format: PO-{YYYY}-{SEQUENCE} (e.g., PO-2026-001)
+    purchase_order_number = models.CharField(
+        max_length=100,
+    )
+    status = models.CharField(max_length=50, choices=POStatus.choices, default=POStatus.DRAFT)
+    invoice_number = models.CharField(max_length=100, blank=True, null=True)
+    invoice_date = models.DateField(null=True, blank=True)
+    delivery_order_number = models.CharField(max_length=100, blank=True, null=True)
+    delivery_date = models.DateField(null=True, blank=True)  # latest delivery date
+
+    warehouse = models.ForeignKey(
+        Warehouse, on_delete=models.CASCADE
+    )  # delivered to which warehouse
+    supplier_name = models.CharField(max_length=255, blank=True, null=True)
+
+    forwarder_name = models.CharField(max_length=255, blank=True, null=True)
+    shop_services = models.CharField(max_length=255, blank=True, null=True)  # jasa belanja
+    comission_fee_pct = models.IntegerField(default=0, blank=True, null=True)
+    comission_fee = models.DecimalField(
+        max_digits=10, decimal_places=3, blank=True, null=True
+    )  # IDR
+
+    delivery_fee = models.DecimalField(
+        max_digits=10, decimal_places=3, blank=True, null=True
+    )  # RMB / else, from supplier to china
+    currency = models.CharField(max_length=10, blank=True, null=True)  # RMB, USD, etc
+    exchange_rate = models.DecimalField(
+        max_digits=10, decimal_places=3, blank=True, null=True
+    )  # IDR
+
+    purchase_order_invoice_file = models.FileField(upload_to="po/invoices/", null=True, blank=True)
+    delivery_order_file = models.FileField(upload_to="po/delivery_orders/", null=True, blank=True)
+    delivery_order_invoice_file = models.FileField(
+        upload_to="po/delivery_invoices/", null=True, blank=True
+    )
+    packing_list_file = models.FileField(upload_to="po/packing_lists/", null=True, blank=True)
+
+    total_qty = models.IntegerField(default=0)
+    cbm = models.DecimalField(max_digits=10, decimal_places=3, blank=True, null=True)  # CBM
+    weight = models.DecimalField(max_digits=10, decimal_places=3, blank=True, null=True)  # kg
+
+    shipping_fee_per_cbm = models.BigIntegerField(default=0, blank=True, null=True)  # IDR
+    shipping_fee = models.BigIntegerField(default=0, blank=True, null=True)  # IDR
+    procure_amount = models.BigIntegerField(blank=True, null=True)  # IDR
+    refund_amount = models.BigIntegerField(blank=True, null=True)  # IDR
+    total_item_amount = models.BigIntegerField(blank=True, null=True)  # IDR
+    total_order_amount = models.BigIntegerField(blank=True, null=True)  # IDR
+    total_amount = models.BigIntegerField(blank=True, null=True)  # IDR
+
+    def __str__(self) -> str:
+        return self.purchase_order_number
+
+    def get_shipping_per_qty(self) -> Decimal:
+        if not self.shipping_fee:
+            return Decimal("0.0")
+
+        return round_decimal(self.shipping_fee / self.total_qty)
+
+    def cost_ratio_cogs(self) -> Decimal:
+        if self.procure_amount and self.total_item_amount and self.shipping_fee:
+            val = (self.procure_amount + self.shipping_fee) / self.total_item_amount * 100.0
+            return round_decimal(val)
+
+        return Decimal("0.0")
+
+
+class PurchaseOrderDetail(DefaultModel):
+    """Details of each item in a Purchase Order"""
+
+    id = ULIDField(
+        primary_key=True,
+        default=generate_ulid,
+        editable=False,
+        db_column="purchase_order_detail_id",
+    )
+    purchase_order = models.ForeignKey(
+        PurchaseOrder, on_delete=models.CASCADE, related_name="order_details"
+    )
+    product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
+
+    ordered_qty = models.IntegerField(default=0)
+    received_qty = models.IntegerField(default=0)
+
+    received_date = models.DateField(null=True, blank=True)
+    remarks = models.TextField(blank=True, null=True)
+
+    unit_price_foreign = models.DecimalField(
+        max_digits=15, decimal_places=3, blank=True, null=True
+    )  # RMB / else
+    unit_price_base = models.BigIntegerField(blank=True, null=True)  # IDR
+    total_price_foreign = models.DecimalField(
+        max_digits=15, decimal_places=3, blank=True, null=True
+    )  # RMB / else
+    total_price_base = models.BigIntegerField(blank=True, null=True)  # IDR
+
+    discounted_unit_price_foreign = models.DecimalField(
+        max_digits=15, decimal_places=3, blank=True, null=True
+    )  # RMB / else
+    discounted_unit_price_base = models.BigIntegerField(blank=True, null=True)  # IDR
+    discounted_total_price_foreign = models.DecimalField(
+        max_digits=15, decimal_places=3, blank=True, null=True
+    )  # RMB / else
+    discounted_total_price_base = models.BigIntegerField(blank=True, null=True)  # IDR
+
+    incoming_qty = models.IntegerField(
+        default=0
+    )  # Stock incoming from other PO when the PO created
+    stock_on_hand = models.IntegerField(default=0)  # Stock before PO received
+    avg_sales = models.DecimalField(
+        max_digits=15, decimal_places=3, blank=True, null=True
+    )  # Average sales per day the po created
+
+    supplier_link = models.CharField(max_length=500, blank=True, null=True)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.purchase_order.purchase_order_number} - {self.product_variant.sku_variant_code}"
+        )

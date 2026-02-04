@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "django_ulid",
     "rest_framework",
     "apps.inventory",
+    "apps.purchasing",
     "core",
 ]
 

@@ -107,8 +107,79 @@ Admin panel:
 
 ---
 
+## 📋 Database Migrations
 
-## 🚀 Deployment (Minikube / Kubernetes Test)
+Migrations are automatically applied when starting PostgreSQL via Docker. However, if you need to run migrations manually:
+
+### Run All Pending Migrations for All Apps
+
+Create migrations for all changed models across all apps:
+
+```bash
+uv run manage.py makemigrations
+```
+
+Apply all pending migrations:
+
+```bash
+uv run manage.py migrate
+```
+
+### Check Migration Status
+
+```bash
+uv run manage.py showmigrations
+```
+
+### Create a New Migration for a Specific App
+
+After modifying models in a specific app, create migrations only for that app:
+
+```bash
+uv run manage.py makemigrations <app_name>
+```
+
+For example, to create migrations for the inventory app:
+
+```bash
+uv run manage.py makemigrations inventory
+```
+
+### Create an Empty Migration File
+
+Sometimes you need to create an empty migration file to add custom SQL or data migrations. Use the `--empty` flag with an optional `--name` to specify a descriptive name:
+
+```bash
+uv run manage.py makemigrations <app_name> --empty --name <migration_name>
+```
+
+**Example: Create an empty migration for adding a database trigger in the inventory app**
+
+```bash
+uv run manage.py makemigrations inventory --empty --name add_sku_sequence_and_triggers
+```
+
+This will create a new migration file like `apps/inventory/migrations/0002_add_sku_sequence_and_triggers.py` with empty `operations` list where you can add custom SQL:
+
+```python
+from django.db import migrations
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ('inventory', '0001_initial'),
+    ]
+
+    operations = [
+        migrations.RunSQL(
+            sql="CREATE SEQUENCE product_sku_seq START WITH 1;",
+            reverse_sql="DROP SEQUENCE product_sku_seq;"
+        ),
+        # Add more operations here
+    ]
+```
+
+
+---
 
 This section details how to deploy the application into a local Kubernetes cluster (Minikube) using pre-built manifests and the included deployment script.
 
