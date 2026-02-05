@@ -84,5 +84,6 @@ class PurchaseOrderTest(TestCase):
         response = self.client.put(f"/purchase-order/{po.id}/", payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["supplier_name"], "Updated Supplier")
-        self.assertEqual(response.data["total_qty"], 200)
+        purchase_order = PurchaseOrder.objects.last()
+        self.assertEqual(purchase_order.supplier_name, "Updated Supplier")
+        self.assertEqual(purchase_order.total_qty, 200)

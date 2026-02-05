@@ -71,8 +71,25 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         try:
-            po = serializer.save()
-            read_serializer = PurchaseOrderReadSerializer(po)
-            return Response(read_serializer.data)
+            validated_data = serializer.validated_data
+            details_data = validated_data.pop("order_details", None)
+
+            # Update PO fields
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
+
+            # Update details if provided
+            if details_data is not None:
+                for detail_data in details_data:
+                    detail_id = detail_data.get("id")
+                    if detail_id:
+                        detail = instance.order_details.get(id=detail_id)
+                        for attr, value in detail_data.items():
+                            setattr(detail, attr, value)
+                        detail.save()
+
+            return Response(status=status.HTTP_200_OK)
+
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
