@@ -4,7 +4,6 @@ from rest_framework import serializers
 
 from apps.inventory.models import ProductVariant
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
-from apps.purchasing.services.purchasing_service import PurchaseOrderService
 
 
 class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
@@ -75,11 +74,7 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
             "total_amount",
             "order_details",
         ]
-
-    def create(self, validated_data: dict) -> PurchaseOrder:
-        po = PurchaseOrderService.create_purchase_order(validated_data)
-
-        return po
+        read_only_fields = ["purchase_order_number"]
 
 
 class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):

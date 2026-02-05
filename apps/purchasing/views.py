@@ -13,6 +13,7 @@ from apps.purchasing.serializers import (
     PurchaseOrderReadSerializer,
     PurchaseOrderUpdateSerializer,
 )
+from apps.purchasing.services import purchasing_service
 
 
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
@@ -49,9 +50,9 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         try:
-            po = serializer.save()
-            read_serializer = PurchaseOrderReadSerializer(po)
-            return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+            services = purchasing_service.PurchaseOrderService()
+            services.create_purchase_order(serializer.validated_data)
+            return Response(status=status.HTTP_201_CREATED)
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

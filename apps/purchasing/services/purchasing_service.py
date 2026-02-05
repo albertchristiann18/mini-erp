@@ -1,6 +1,7 @@
 from typing import Dict, List
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
 from apps.inventory.models import ProductVariant, Warehouse
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
@@ -13,8 +14,8 @@ class PurchaseOrderService:
     Handles creation, updates, and inventory-related logic.
     """
 
-    @staticmethod
-    def create_purchase_order(data: dict) -> PurchaseOrder:
+    @transaction.atomic
+    def create_purchase_order(self, data: dict) -> None:
         """
         Create a Purchase Order with nested order details.
 
@@ -63,8 +64,6 @@ class PurchaseOrderService:
             PurchaseOrderDetail.objects.create(
                 purchase_order=po, product_variant=product_variant, company=company, **detail_data
             )
-
-        return po
 
     @staticmethod
     def update_purchase_order(po: PurchaseOrder, data: dict) -> PurchaseOrder:

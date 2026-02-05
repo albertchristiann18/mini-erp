@@ -34,8 +34,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
 
-        ProductService = product_service.ProductService()
-        ProductService.create_product_with_variants(validated_data)
+        services = product_service.ProductService()
+        services.create_product_with_variants(validated_data)
 
         return Response(status=status.HTTP_201_CREATED)
 

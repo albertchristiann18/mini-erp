@@ -2,6 +2,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.purchasing.models import PurchaseOrder
 from core.factories import (
     CategoryFactory,
     CompanyFactory,
@@ -68,7 +69,8 @@ class PurchaseOrderTest(TestCase):
         response = self.client.post("/purchase-order/", payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data["purchase_order_number"], "PO-TEST-001")
+        purchase_order = PurchaseOrder.objects.last()
+        self.assertTrue(purchase_order.purchase_order_number.startswith("PO-2026-"))
 
     def test_update_po(self):
         """Update a PO"""
