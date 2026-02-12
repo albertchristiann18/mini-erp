@@ -1,5 +1,5 @@
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, Dict, List
 
 from ulid.api.api import Api
 from ulid.providers import DEFAULT
@@ -120,3 +120,31 @@ def get_default_shipping_config() -> dict:
             "Tokopedia_TikTok": {"use_general_config": True},
         },
     }
+
+
+def is_valid_status_transition(
+    current_status: str,
+    new_status: str,
+    status_map: Dict[str, List[str]],
+) -> bool:
+    """
+    Check if a status transition is valid.
+
+    Args:
+        current_status: The current status
+        new_status: The desired new status
+        status_map: Dictionary mapping current status to list of allowed next statuses
+            Example:
+            {
+                "DRAFT": ["ORDERED"],
+                "ORDERED": ["SHIPPED", "DRAFT"],
+                "SHIPPED": ["DELIVERED"],
+                "DELIVERED": ["COMPLETED"],
+                "COMPLETED": [],
+            }
+
+    Returns:
+        True if transition is valid, False otherwise
+    """
+    allowed = status_map.get(current_status, [])
+    return new_status in allowed

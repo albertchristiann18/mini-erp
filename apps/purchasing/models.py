@@ -55,6 +55,7 @@ class PurchaseOrder(DefaultModel):
         max_digits=10, decimal_places=3, blank=True, null=True
     )  # IDR
 
+    # The file will be uploaded to R2 automatically because of our settings.py
     purchase_order_invoice_file = models.FileField(upload_to="po/invoices/", null=True, blank=True)
     delivery_order_file = models.FileField(upload_to="po/delivery_orders/", null=True, blank=True)
     delivery_order_invoice_file = models.FileField(
