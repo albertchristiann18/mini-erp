@@ -26,6 +26,7 @@ from core import views
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("apps.inventory.urls")),
+    path("", include("apps.purchasing.urls")),
 ]
 
 router = DefaultRouter()

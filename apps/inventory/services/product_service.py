@@ -12,7 +12,6 @@ class ProductService:
     def create_product_with_variants(self, validated_data: list) -> None:
         company_id = validated_data[0].get("company_id", "")
 
-        # with transaction.atomic():
         products = [
             Product(
                 company_id=company_id,

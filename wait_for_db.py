@@ -1,4 +1,3 @@
-# wait_for_db.py
 import os
 import socket
 import sys
