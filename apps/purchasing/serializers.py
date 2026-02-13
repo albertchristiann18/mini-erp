@@ -1,9 +1,11 @@
 from typing import Any, Dict
 
+from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
 
 from apps.inventory.models import ProductVariant
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
+from core.utils import is_valid_pdf
 
 
 class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
@@ -73,8 +75,46 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
             "total_qty",
             "total_amount",
             "order_details",
+            "purchase_order_invoice_file",
+            "delivery_order_file",
+            "delivery_order_invoice_file",
         ]
+        extra_kwargs = {
+            "purchase_order_number": {"required": False},
+            "purchase_order_invoice_file": {"required": False},
+            "delivery_order_file": {"required": False},
+            "delivery_order_invoice_file": {"required": False},
+        }
         read_only_fields = ["purchase_order_number"]
+
+    def validate_purchase_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+
+        return value
+
+    def validate_delivery_order_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+
+        return value
+
+    def validate_delivery_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+        return value
 
 
 class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
@@ -93,10 +133,46 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
             "invoice_number",
             "delivery_date",
             "order_details",
+            "purchase_order_invoice_file",
+            "delivery_order_file",
+            "delivery_order_invoice_file",
         ]
         extra_kwargs = {
             "purchase_order_number": {"required": False},
+            "purchase_order_invoice_file": {"required": False},
+            "delivery_order_file": {"required": False},
+            "delivery_order_invoice_file": {"required": False},
         }
+
+    def validate_purchase_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+
+        return value
+
+    def validate_delivery_order_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+
+        return value
+
+    def validate_delivery_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
+        if not value:
+            raise serializers.ValidationError("No file provided.")
+
+        is_valid, error_msg = is_valid_pdf(value, max_size_mb=2)
+        if not is_valid:
+            raise serializers.ValidationError(error_msg)
+
+        return value
 
 
 class PurchaseOrderReadSerializer(serializers.ModelSerializer):

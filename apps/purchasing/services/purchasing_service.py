@@ -6,7 +6,7 @@ from django.db import transaction
 from apps.inventory.models import ProductVariant, Warehouse
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company
-from core.utils import is_valid_status_transition
+from core.utils import compress_pdf_file, is_valid_status_transition
 
 
 class PurchaseOrderService:
@@ -78,8 +78,8 @@ class PurchaseOrderService:
                 purchase_order=po, product_variant=product_variant, company=company, **detail_data
             )
 
-    @staticmethod
-    def update_purchase_order(po: PurchaseOrder, data: dict) -> PurchaseOrder:
+    @transaction.atomic
+    def update_purchase_order(self, po: PurchaseOrder, data: dict) -> PurchaseOrder:
         """
         Update a Purchase Order and its details.
         Validates status changes based on business rules.
@@ -99,10 +99,40 @@ class PurchaseOrderService:
         Returns:
             Updated PurchaseOrder instance
         """
+        purchase_order_invoice_file = data.get("purchase_order_invoice_file")
+        delivery_order_file = data.get("delivery_order_file")
+        delivery_order_invoice_file = data.get("delivery_order_invoice_file")
         # Validate status change if provided
         if "status" in data:
+            old_status = po.status
             new_status = data["status"]
-            PurchaseOrderService._validate_status_transition(po, new_status)
+            if not is_valid_status_transition(
+                old_status, new_status, PurchaseOrderService.STATUS_TRANSITIONS
+            ):
+                allowed = PurchaseOrderService.STATUS_TRANSITIONS.get(old_status, [])
+                raise ValidationError(
+                    f"Cannot transition from {old_status} to {new_status}. "
+                    f"Allowed transitions: {', '.join(allowed) if allowed else 'none'}"
+                )
+
+            if (
+                old_status == PurchaseOrder.POStatus.DRAFT
+                and new_status == PurchaseOrder.POStatus.ORDERED
+                and (not po.purchase_order_invoice_file and purchase_order_invoice_file is None)
+            ):
+                raise ValidationError("please upload the invoice file")
+
+        if purchase_order_invoice_file:
+            po_invoice_compressed_file = compress_pdf_file(purchase_order_invoice_file)
+            data["purchase_order_invoice_file"] = po_invoice_compressed_file
+
+        if delivery_order_file:
+            do_compressed_file = compress_pdf_file(delivery_order_file)
+            data["delivery_order_file"] = do_compressed_file
+
+        if delivery_order_invoice_file:
+            do_invoice_compressed_file = compress_pdf_file(delivery_order_invoice_file)
+            data["delivery_order_invoice_file"] = do_invoice_compressed_file
 
         # Extract order_details for separate handling
         details_data = data.pop("order_details", None)
@@ -130,45 +160,6 @@ class PurchaseOrderService:
         return po
 
     @staticmethod
-    def _validate_status_transition(po: PurchaseOrder, new_status: str) -> None:
-        """
-        Validate status transition is allowed.
-
-        Allowed transitions:
-        - DRAFT → ORDERED
-        - ORDERED → SHIPPED, DRAFT
-        - SHIPPED → DELIVERED
-        - DELIVERED → COMPLETED
-        - COMPLETED → (no transitions)
-        """
-        old_status = po.status
-
-        # Check if transition is valid
-        if not is_valid_status_transition(
-            old_status, new_status, PurchaseOrderService.STATUS_TRANSITIONS
-        ):
-            allowed = PurchaseOrderService.STATUS_TRANSITIONS.get(old_status, [])
-            raise ValidationError(
-                f"Cannot transition from {old_status} to {new_status}. "
-                f"Allowed transitions: {', '.join(allowed) if allowed else 'none'}"
-            )
-
-        # Add business logic validation for specific transitions
-        if (
-            old_status == PurchaseOrder.POStatus.DRAFT
-            and new_status == PurchaseOrder.POStatus.ORDERED
-        ):
-            if not po.purchase_order_invoice_file:
-                raise ValidationError("please upload the invoice file")
-
-        if (
-            old_status == PurchaseOrder.POStatus.ORDERED
-            and new_status == PurchaseOrder.POStatus.SHIPPED
-        ):
-            if not po.supplier_name:
-                raise ValidationError("Supplier name is required before shipping")
-
-    @staticmethod
     def handle_delivery_update(po: PurchaseOrder, details_data: list) -> None:
         """
         Handle inventory updates when delivery is received.
@@ -190,13 +181,6 @@ class PurchaseOrderService:
                     detail = po.order_details.get(id=detail_id)
                     detail.received_qty = received_qty
                     detail.save()
-
-                    # TODO: Update inventory/warehouse stock
-                    # warehouse = po.warehouse
-                    # warehouse.update_stock(
-                    #     product_variant=detail.product_variant,
-                    #     quantity_added=received_qty
-                    # )
 
                 except PurchaseOrderDetail.DoesNotExist:
                     raise ValidationError(f"Detail with id {detail_id} not found")
