@@ -121,6 +121,9 @@ class InventoryService:
         update_pvws: list[ProductVariantWarehouse] = []
         update_pv: list[ProductVariant] = []
         stock_movements: list[StockMovement] = []
+
+        update_fields_pvw = set()
+        update_fields_pv = set()
         for item in data:
             balance_after = 0
             product_variant_id = item.get("product_variant_id")
@@ -146,9 +149,13 @@ class InventoryService:
 
                 pvw.incoming_qty += qty
                 pvw.udate = timezone.now()
+                update_fields_pvw.add("incoming_qty")
+                update_fields_pvw.add("udate")
 
                 pv.total_incoming_qty += qty
                 pv.udate = timezone.now()
+                update_fields_pv.add("total_incoming_qty")
+                update_fields_pv.add("udate")
 
                 balance_after = pvw.incoming_qty
                 if do_update:
@@ -171,5 +178,7 @@ class InventoryService:
 
         StockMovement.objects.bulk_create(stock_movements, batch_size=100)
         ProductVariantWarehouse.objects.bulk_create(new_pvws, batch_size=100)
-        ProductVariantWarehouse.objects.bulk_update(update_pvws, fields=["incoming_qty", "udate"])
-        ProductVariant.objects.bulk_update(update_pv, fields=["total_incoming_qty", "udate"])
+        ProductVariantWarehouse.objects.bulk_update(
+            update_pvws, fields=list(update_fields_pv), batch_size=100
+        )
+        ProductVariant.objects.bulk_update(update_pv, fields=list(update_fields_pv), batch_size=100)
