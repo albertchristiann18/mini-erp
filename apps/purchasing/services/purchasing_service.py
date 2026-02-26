@@ -3,7 +3,8 @@ from typing import Dict, List
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from apps.inventory.models import ProductVariant, Warehouse
+from apps.inventory.models import ProductVariant, StockMovement, Warehouse
+from apps.inventory.services.inventory_service import InventoryService
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company
 from core.utils import compress_pdf_file, is_valid_status_transition
@@ -20,7 +21,6 @@ class PurchaseOrderService:
         PurchaseOrder.POStatus.DRAFT: [PurchaseOrder.POStatus.ORDERED],
         PurchaseOrder.POStatus.ORDERED: [
             PurchaseOrder.POStatus.SHIPPED,
-            PurchaseOrder.POStatus.DRAFT,
         ],
         PurchaseOrder.POStatus.SHIPPED: [PurchaseOrder.POStatus.DELIVERED],
         PurchaseOrder.POStatus.DELIVERED: [PurchaseOrder.POStatus.COMPLETED],
@@ -98,6 +98,9 @@ class PurchaseOrderService:
 
         Returns:
             Updated PurchaseOrder instance
+
+        Notes:
+            - packing list mechanism
         """
         purchase_order_invoice_file = data.get("purchase_order_invoice_file")
         delivery_order_file = data.get("delivery_order_file")
@@ -121,6 +124,47 @@ class PurchaseOrderService:
                 and (not po.purchase_order_invoice_file and purchase_order_invoice_file is None)
             ):
                 raise ValidationError("please upload the invoice file")
+            elif (
+                old_status == PurchaseOrder.POStatus.ORDERED
+                and new_status == PurchaseOrder.POStatus.SHIPPED
+                and (not po.delivery_order_file and delivery_order_file is None)
+            ):
+                raise ValidationError("please upload the delivery order file")
+            elif (
+                old_status == PurchaseOrder.POStatus.SHIPPED
+                and new_status == PurchaseOrder.POStatus.DELIVERED
+                and (not po.delivery_order_invoice_file and delivery_order_invoice_file is None)
+            ):
+                raise ValidationError("please upload the delivery order invoice file")
+
+            if (
+                old_status == PurchaseOrder.POStatus.DRAFT
+                and new_status == PurchaseOrder.POStatus.ORDERED
+            ):
+                stored_data = []
+                for item in data.get("order_details", []):
+                    stored_data.append(
+                        {
+                            "product_variant_id": item.get("product_variant_id"),
+                            "qty": item.get("ordered_qty"),
+                            "note": f"Stock movement for PO {po.purchase_order_number} creation",
+                        }
+                    )
+                inventory_service = InventoryService()
+                inventory_service.record_multiple_stock_movements(
+                    warehouse_id=po.warehouse.id,
+                    movement_type=StockMovement.MovementType.PURCHASE,
+                    data=stored_data,
+                    reference_number=po.purchase_order_number,
+                )
+            elif (
+                old_status == PurchaseOrder.POStatus.DELIVERED
+                and new_status == PurchaseOrder.POStatus.COMPLETED
+            ):
+                # do inventory pricing update after the update successfully saved
+                # ProductCogs, ProductVariantWarehouse, ProductVariant
+
+                pass
 
         if purchase_order_invoice_file:
             po_invoice_compressed_file = compress_pdf_file(purchase_order_invoice_file)
@@ -158,29 +202,3 @@ class PurchaseOrderService:
                         raise ValidationError(f"Detail with id {detail_id} not found")
 
         return po
-
-    @staticmethod
-    def handle_delivery_update(po: PurchaseOrder, details_data: list) -> None:
-        """
-        Handle inventory updates when delivery is received.
-        Base template for inventory logic.
-
-        Args:
-            po: PurchaseOrder instance
-            details_data: List of detail updates with received quantities
-                [
-                    {"id": "...", "received_qty": 50}
-                ]
-        """
-        for detail_data in details_data:
-            detail_id = detail_data.get("id")
-            received_qty = detail_data.get("received_qty")
-
-            if detail_id and received_qty:
-                try:
-                    detail = po.order_details.get(id=detail_id)
-                    detail.received_qty = received_qty
-                    detail.save()
-
-                except PurchaseOrderDetail.DoesNotExist:
-                    raise ValidationError(f"Detail with id {detail_id} not found")

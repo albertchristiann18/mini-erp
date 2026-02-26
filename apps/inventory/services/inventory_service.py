@@ -1,8 +1,10 @@
 from typing import Optional
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
-from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement, Warehouse
+from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement
 
 
 class InventoryService:
@@ -10,7 +12,7 @@ class InventoryService:
     def record_single_stock_movement(
         self,
         variant_id: int,
-        warehouse: Warehouse,
+        warehouse_id: int,
         qty: int,  # need to be absolute value (not negative)
         movement_type: str,
         reference_number: Optional[str] = None,
@@ -18,14 +20,11 @@ class InventoryService:
     ) -> None:
         """
         Args:
-            variant_id (int): _description_
-            warehouse (Warehouse): _description_
-            qty (int): _description_
-            reference_number (str, optional): _description_. Defaults to None.
-            note (str, optional): _description_. Defaults to None.
-
-        Returns:
-            _type_: _description_
+            variant_id (int): product_variant_id
+            warehouse (Warehouse): the warehouse where this movement happens
+            qty (int): quantity
+            reference_number (str, optional): reference number can refer to po_number, or invoice_number etc.
+            note (str, optional): notes / remarks for each movement
 
         Notes:
             - for movement_type = ADJUSTMENT, qty can be inpputed positive or negative
@@ -37,13 +36,13 @@ class InventoryService:
         variant = ProductVariant.objects.select_for_update().get(id=variant_id)
         pvw = (
             ProductVariantWarehouse.objects.select_for_update()
-            .filter(product_variant=variant, warehouse=warehouse)
+            .filter(product_variant=variant, warehouse_id=warehouse_id)
             .last()
         )
         if not pvw:
             pvw = ProductVariantWarehouse.objects.create(
                 product_variant=variant,
-                warehouse=warehouse,
+                warehouse_id=warehouse_id,
             )
 
         balance_before = variant.total_available_qty
@@ -61,7 +60,7 @@ class InventoryService:
 
         StockMovement.objects.create(
             product_variant=variant,
-            warehouse=warehouse,
+            warehouse_id=warehouse_id,
             quantity=qty,
             movement_type=movement_type,
             balance_before=balance_before,
@@ -74,3 +73,103 @@ class InventoryService:
         variant.save(update_fields=["total_available_qty"])
 
         return
+
+    @transaction.atomic
+    def record_multiple_stock_movements(
+        self,
+        warehouse_id: int,
+        movement_type: str,
+        data: list[dict],
+        reference_number: Optional[str] = None,
+    ) -> None:
+        """_summary_
+
+        Args:
+            data sample : [{
+                'product_variant_id': '...',
+                'qty': 100,
+                'note': 'optional note for this movement'
+            }]
+
+        Notes:
+            so the inputted qty is the qty of the variant we want to change, so we need to know the context of it first
+            such as qty for incoming, or qty for received, or qty that want to be changed
+        """
+        product_variant_ids = []
+        for item in data:
+            product_variant_id = item.get("product_variant_id")
+            qty = item.get("qty")
+            if not product_variant_id:
+                raise ValidationError(
+                    "product_variant_id and qty are required for each movement item"
+                )
+
+            product_variant_ids.append(product_variant_id)
+
+        product_variants = ProductVariant.objects.select_for_update().filter(
+            id__in=product_variant_ids
+        )
+        product_variant_warehouses = ProductVariantWarehouse.objects.select_for_update().filter(
+            product_variant__in=product_variants, warehouse_id=warehouse_id
+        )
+        map_product_warehouse = {
+            pvw.product_variant.id: pvw for pvw in product_variant_warehouses.iterator()
+        }
+        map_product_variant = {pv.id: pv for pv in product_variants.iterator()}
+
+        new_pvws: list[ProductVariantWarehouse] = []
+        update_pvws: list[ProductVariantWarehouse] = []
+        update_pv: list[ProductVariant] = []
+        stock_movements: list[StockMovement] = []
+        for item in data:
+            balance_after = 0
+            product_variant_id = item.get("product_variant_id")
+            do_update = False
+            pv = map_product_variant.get(product_variant_id)
+            if not pv:
+                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
+            pvw = map_product_warehouse.get(product_variant_id)
+            if not pvw:
+                pvw = ProductVariantWarehouse(
+                    product_variant=pv,
+                    warehouse_id=warehouse_id,
+                )
+                new_pvws.append(pvw)
+                balance_before = 0
+            else:
+                do_update = True
+
+            qty = item.get("qty", 0)
+            if movement_type == StockMovement.MovementType.PURCHASE:
+                field_change = "incoming_qty"
+                balance_before = pvw.incoming_qty
+
+                pvw.incoming_qty += qty
+                pvw.udate = timezone.now()
+
+                pv.total_incoming_qty += qty
+                pv.udate = timezone.now()
+
+                balance_after = pvw.incoming_qty
+                if do_update:
+                    update_pvws.append(pvw)
+                    update_pv.append(pv)
+
+            stock_movements.append(
+                StockMovement(
+                    product_variant_id=product_variant_id,
+                    warehouse_id=warehouse_id,
+                    quantity=qty,
+                    field_change=field_change,
+                    movement_type=movement_type,
+                    balance_before=balance_before,
+                    balance_after=balance_after,
+                    reference_number=reference_number,
+                    note=item.get("note"),
+                )
+            )
+
+        StockMovement.objects.bulk_create(stock_movements, batch_size=100)
+        ProductVariantWarehouse.objects.bulk_create(new_pvws, batch_size=100)
+        ProductVariantWarehouse.objects.bulk_update(update_pvws, fields=["incoming_qty", "udate"])
+        ProductVariant.objects.bulk_update(update_pv, fields=["total_incoming_qty", "udate"])

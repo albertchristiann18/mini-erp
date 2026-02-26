@@ -121,12 +121,14 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating Purchase Orders and Details"""
 
     order_details = PurchaseOrderDetailSerializer(many=True, required=False)
+    warehouse_id = serializers.CharField(write_only=True)
 
     class Meta:
         model = PurchaseOrder
         fields = [
             "purchase_order_number",
             "status",
+            "warehouse_id",
             "supplier_name",
             "total_qty",
             "total_amount",

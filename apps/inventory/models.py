@@ -232,6 +232,7 @@ class StockMovement(DefaultModel):
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.PROTECT)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=3, choices=MovementType.choices)
+    field_change = models.CharField(max_length=100)  # what field is changed
     quantity = models.IntegerField()  # Use positive for IN, negative for OUT
     reference_number = models.CharField(max_length=100, blank=True, null=True)  # PO# or Order ID
     note = models.TextField(blank=True, null=True)

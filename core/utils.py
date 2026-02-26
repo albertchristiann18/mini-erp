@@ -154,6 +154,8 @@ def is_valid_status_transition(
     Returns:
         True if transition is valid, False otherwise
     """
+    if current_status == new_status:
+        return True  # Allow same status (idempotent)
     allowed = status_map.get(current_status, [])
     return new_status in allowed
 
