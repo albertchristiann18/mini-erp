@@ -32,6 +32,10 @@ env = environ.Env(
     DB_PASSWORD=(str, ""),
     DB_HOST=(str, ""),
     DB_PORT=(str, ""),
+    AWS_ACCESS_KEY_ID=(str, ""),
+    AWS_SECRET_ACCESS_KEY=(str, ""),
+    AWS_STORAGE_BUCKET_NAME=(str, ""),
+    AWS_S3_ENDPOINT_URL=(str, ""),
 )
 
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
