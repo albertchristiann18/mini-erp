@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.inventory.models import ProductVariant, StockMovement, Warehouse
+from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement, Warehouse
 from apps.inventory.services.inventory_service import InventoryService
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company
@@ -18,7 +18,6 @@ class PurchaseOrderService:
     Handles creation, updates, and inventory-related logic.
     """
 
-    # Define allowed status transitions
     STATUS_TRANSITIONS: Dict[str, List[str]] = {
         PurchaseOrder.POStatus.DRAFT: [PurchaseOrder.POStatus.ORDERED],
         PurchaseOrder.POStatus.ORDERED: [
@@ -29,50 +28,80 @@ class PurchaseOrderService:
         PurchaseOrder.POStatus.COMPLETED: [],
     }
 
-    @transaction.atomic
-    def create_purchase_order(self, data: dict) -> None:
-        """
-        Create a Purchase Order with nested order details.
+    def _handle_ordered_status_inventory(self, po: PurchaseOrder) -> None:
+        """Handle inventory update when PO status becomes ORDERED.
+
+        This updates:
+        - ProductVariantWarehouse.incoming_qty (for the warehouse)
+        - ProductVariant.total_incoming_qty (global total)
+        - StockMovement records
 
         Args:
-            data: Dictionary with PO fields and order_details array
-                {
-                    "purchase_order_number": "PO-001",
-                    "warehouse_id": "...",
-                    "company_id": "...",
-                    "supplier_name": "Supplier ABC",
-                    "total_qty": 100,
-                    "total_amount": 10250000,
-                    "order_details": [
-                        {
-                            "product_variant_id": "...",
-                            "ordered_qty": 50,
-                            "unit_price_base": 220000,
-                        }
-                    ]
-                }
-
-        Returns:
-            Created PurchaseOrder instance
+            po: PurchaseOrder instance that is now ORDERED
         """
-        # Extract nested details
+        stored_data = []
+        product_variant_ids = []
+        for detail in po.order_details.all():
+            stored_data.append(
+                {
+                    "product_variant_id": str(detail.product_variant.id),
+                    "qty": detail.ordered_qty,
+                    "note": f"Stock movement for PO {po.purchase_order_number} purchase",
+                }
+            )
+            product_variant_ids.append(str(detail.product_variant.id))
+
+        if stored_data:
+            product_variants = list(
+                ProductVariant.objects.select_for_update().filter(id__in=product_variant_ids)
+            )
+            product_variant_warehouses = list(
+                ProductVariantWarehouse.objects.select_for_update().filter(
+                    product_variant__in=product_variants, warehouse_id=po.warehouse.id
+                )
+            )
+
+            map_product_variant = {pv.id: pv for pv in product_variants}
+            map_product_warehouse = {
+                pvw.product_variant.id: pvw for pvw in product_variant_warehouses
+            }
+
+            inventory_service = InventoryService()
+            inventory_service.record_multiple_stock_movements(
+                warehouse_id=po.warehouse.id,
+                movement_type=StockMovement.MovementType.PURCHASE,
+                data=stored_data,
+                reference_number=po.purchase_order_number,
+                map_product_variant=map_product_variant,
+                map_product_warehouse=map_product_warehouse,
+            )
+            inventory_service.update_inventory_on_po_ordered(
+                warehouse_id=po.warehouse.id,
+                data=stored_data,
+                map_product_variant=map_product_variant,
+                map_product_warehouse=map_product_warehouse,
+            )
+
+        for detail in po.order_details.all():
+            detail.updated_qty = detail.ordered_qty
+            detail.save(update_fields=["updated_qty", "udate"])
+
+    @transaction.atomic
+    def create_purchase_order(self, data: dict) -> None:
+        """Create a Purchase Order with nested order details."""
         details_data = data.pop("order_details", [])
         warehouse_id = data.pop("warehouse_id")
         company_id = data.pop("company_id")
 
-        # Validate required data
         if not details_data:
             raise ValidationError("At least one order detail is required")
 
-        # Get ForeignKey objects
         warehouse = Warehouse.objects.get(id=warehouse_id)
         company = Company.objects.get(id=company_id)
 
-        # Create the PurchaseOrder with DRAFT status by default
         data.setdefault("status", PurchaseOrder.POStatus.DRAFT)
         po = PurchaseOrder.objects.create(warehouse=warehouse, company=company, **data)
 
-        # Create related details
         for detail_data in details_data:
             product_variant_id = detail_data.pop("product_variant_id")
             product_variant = ProductVariant.objects.get(id=product_variant_id)
@@ -82,37 +111,16 @@ class PurchaseOrderService:
 
     @transaction.atomic
     def update_purchase_order(self, po: PurchaseOrder, data: dict) -> PurchaseOrder:
-        """
-        Update a Purchase Order and its details.
-        Validates status changes based on business rules.
-
-        Args:
-            po: PurchaseOrder instance to update
-            data: Dictionary with fields to update
-                {
-                    "status": "ORDERED",
-                    "supplier_name": "New Supplier",
-                    "total_qty": 150,
-                    "order_details": [
-                        {"id": "...", "ordered_qty": 75}
-                    ]
-                }
-
-        Returns:
-            Updated PurchaseOrder instance
-
-        Notes:
-            - packing list mechanism
-        """
+        """Update a Purchase Order and its details."""
         purchase_order_invoice_file = data.get("purchase_order_invoice_file")
-
         delivery_order_number = data.get("delivery_order_number")
         delivery_order_file = data.get("delivery_order_file")
         delivery_order_invoice_file = data.get("delivery_order_invoice_file")
-        # Validate status change if provided
+
         if "status" in data:
             old_status = po.status
             new_status = data["status"]
+
             if not is_valid_status_transition(
                 old_status, new_status, PurchaseOrderService.STATUS_TRANSITIONS
             ):
@@ -150,42 +158,20 @@ class PurchaseOrderService:
                 old_status == PurchaseOrder.POStatus.DRAFT
                 and new_status == PurchaseOrder.POStatus.ORDERED
             ):
-                stored_data = []
-                for item in data.get("order_details", []):
-                    stored_data.append(
-                        {
-                            "product_variant_id": item.get("product_variant_id"),
-                            "qty": item.get("ordered_qty"),
-                            "note": f"Stock movement for PO {po.purchase_order_number} creation",
-                        }
-                    )
-                inventory_service = InventoryService()
-                inventory_service.record_multiple_stock_movements(
-                    warehouse_id=po.warehouse.id,
-                    movement_type=StockMovement.MovementType.PURCHASE,
-                    data=stored_data,
-                    reference_number=po.purchase_order_number,
-                )
-            elif new_status == PurchaseOrder.POStatus.DELIVERED:
-                # do inventory pricing update after the update successfully saved
-                # ProductCogs, ProductVariantWarehouse, ProductVariant
+                self._handle_ordered_status_inventory(po)
 
-                # search the pod for the updated_qty
-
+            if new_status == PurchaseOrder.POStatus.DELIVERED:
                 stored_data = []
+                valid_items = []
                 for item in data.get("order_details", []):
                     receive_date_str = item.get("received_date")
                     received_qty = item.get("received_qty", 0)
                     if not receive_date_str or not received_qty:
-                        # skip if received date is not provided, need to log this
                         continue
                     receive_date = datetime.fromisoformat(receive_date_str.replace("Z", "+00:00"))
                     if receive_date and item.get("ordered_qty", 0) == received_qty:
-                        # skip due to all items already received, so no need to update the inventory
                         continue
                     if receive_date and po.delivery_date and receive_date.date() < po.delivery_date:
-                        # skip if receved date smaller than delivery date
-                        # which means items already received before, so no need to update the inventory
                         continue
 
                     stored_data.append(
@@ -195,16 +181,35 @@ class PurchaseOrderService:
                             "note": f"Stock movement for PO {po.purchase_order_number} inbound",
                         }
                     )
+                    valid_items.append(item)
+
+                if stored_data:
+                    product_variant_ids = [item.get("product_variant_id") for item in stored_data]
+                    product_variants = ProductVariant.objects.filter(id__in=product_variant_ids)
+                    product_variant_warehouses = list(
+                        ProductVariantWarehouse.objects.filter(
+                            product_variant__in=product_variants, warehouse_id=po.warehouse.id
+                        )
+                    )
+
+                    map_product_variant = {pv.id: pv for pv in product_variants}
+                    map_product_warehouse = {
+                        pvw.product_variant.id: pvw for pvw in product_variant_warehouses
+                    }
+
                     inventory_service = InventoryService()
                     inventory_service.record_multiple_stock_movements(
                         warehouse_id=po.warehouse.id,
                         movement_type=StockMovement.MovementType.INBOUND,
                         data=stored_data,
                         reference_number=delivery_order_number or po.delivery_order_number,
+                        map_product_variant=map_product_variant,
+                        map_product_warehouse=map_product_warehouse,
                     )
-                    detail = po.order_details.get(id=item.get("id"))
-                    detail.updated_qty = received_qty - detail.updated_qty
-                    detail.save()
+                    for item in valid_items:
+                        detail = po.order_details.get(id=item.get("id"))
+                        detail.updated_qty = detail.updated_qty + item.get("received_qty", 0)
+                        detail.save(update_fields=["updated_qty", "udate"])
 
         if purchase_order_invoice_file:
             po_invoice_compressed_file = compress_pdf_file(purchase_order_invoice_file)
@@ -218,18 +223,15 @@ class PurchaseOrderService:
             do_invoice_compressed_file = compress_pdf_file(delivery_order_invoice_file)
             data["delivery_order_invoice_file"] = do_invoice_compressed_file
 
-        # Extract order_details for separate handling
         details_data = data.pop("order_details", None)
 
         updated_fields = ["udate"]
-        # Update PO fields
         for attr, value in data.items():
-            if attr != "id":  # Skip id field
+            if attr != "id":
                 updated_fields.append(attr)
                 setattr(po, attr, value)
         po.save(update_fields=updated_fields)
 
-        # Update details if provided
         if details_data is not None:
             for detail_data in details_data:
                 detail_id = detail_data.get("id")

@@ -80,110 +80,46 @@ class InventoryService:
         warehouse_id: int,
         movement_type: str,
         data: list[dict],
+        map_product_variant: dict,
+        map_product_warehouse: dict,
         reference_number: Optional[str] = None,
     ) -> None:
-        """_summary_
+        """Create stock movement records.
 
         Args:
-            data sample : [{
-                'product_variant_id': '...',
-                'qty': 100,
-                'note': 'optional note for this movement'
-            }]
+            warehouse_id: The warehouse ID
+            movement_type: Type of movement (PURCHASE, INBOUND, etc.)
+            data: List of dicts with product_variant_id, qty, note
+            map_product_variant: Dict mapping id -> ProductVariant. If not provided, will query internally.
+            map_product_warehouse: Dict mapping product_variant_id -> ProductVariantWarehouse. If not provided, will query internally.
+            reference_number: Optional reference (e.g., PO number)
 
-        Notes:
-            so the inputted qty is the qty of the variant we want to change, so we need to know the context of it first
-            such as qty for incoming, or qty for received, or qty that want to be changed
+        Note:
+            For better performance, provide map_product_variant and map_product_warehouse
+            when calling from purchasing service (ORDERED status).
         """
-        product_variant_ids = []
-        for item in data:
-            product_variant_id = item.get("product_variant_id")
-            qty = item.get("qty")
-            if not product_variant_id:
-                raise ValidationError(
-                    "product_variant_id and qty are required for each movement item"
-                )
+        if not map_product_variant and not map_product_warehouse:
+            return
 
-            product_variant_ids.append(product_variant_id)
-
-        product_variants = ProductVariant.objects.select_for_update().filter(
-            id__in=product_variant_ids
-        )
-        product_variant_warehouses = ProductVariantWarehouse.objects.select_for_update().filter(
-            product_variant__in=product_variants, warehouse_id=warehouse_id
-        )
-        map_product_warehouse = {
-            pvw.product_variant.id: pvw for pvw in product_variant_warehouses.iterator()
-        }
-        map_product_variant = {pv.id: pv for pv in product_variants.iterator()}
-
-        new_pvws: list[ProductVariantWarehouse] = []
-        update_pvws: list[ProductVariantWarehouse] = []
-        update_pv: list[ProductVariant] = []
         stock_movements: list[StockMovement] = []
-
-        update_fields_pvw = set()
-        update_fields_pv = set()
         for item in data:
             balance_after = 0
             product_variant_id = item.get("product_variant_id")
-            do_update = False
             pv = map_product_variant.get(product_variant_id)
             if not pv:
                 raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
             pvw = map_product_warehouse.get(product_variant_id)
-            if not pvw:
-                pvw = ProductVariantWarehouse(
-                    product_variant=pv,
-                    warehouse_id=warehouse_id,
-                )
-                new_pvws.append(pvw)
-                balance_before = 0
-            else:
-                do_update = True
 
             qty = item.get("qty", 0)
             if movement_type == StockMovement.MovementType.PURCHASE:
                 field_change = "incoming_qty"
-                balance_before = pvw.incoming_qty
-
-                pvw.incoming_qty += qty
-                pvw.udate = timezone.now()
-                update_fields_pvw.add("incoming_qty")
-                update_fields_pvw.add("udate")
-
-                pv.total_incoming_qty += qty
-                pv.udate = timezone.now()
-                update_fields_pv.add("total_incoming_qty")
-                update_fields_pv.add("udate")
-
-                balance_after = pvw.incoming_qty
-                if do_update:
-                    update_pvws.append(pvw)
-                    update_pv.append(pv)
+                balance_before = pvw.incoming_qty if pvw else 0
+                balance_after = balance_before + qty
 
             if movement_type == StockMovement.MovementType.INBOUND:
                 field_change = "available_qty"
-                balance_before = pvw.available_qty
-
-                pvw.physical_qty += qty
-                pvw.incoming_qty -= qty
-                pvw.udate = timezone.now()
-                update_fields_pvw.add("physical_qty")
-                update_fields_pvw.add("incoming_qty")
-                update_fields_pvw.add("udate")
-
-                pv.total_available_qty += qty
-                pv.total_incoming_qty -= qty
-                pv.udate = timezone.now()
-                update_fields_pv.add("total_available_qty")
-                update_fields_pv.add("total_incoming_qty")
-                update_fields_pv.add("udate")
-
-                balance_after = pvw.available_qty
-                if do_update:
-                    update_pvws.append(pvw)
-                    update_pv.append(pv)
+                balance_before = pvw.available_qty if pvw else 0
+                balance_after = balance_before + qty
 
             stock_movements.append(
                 StockMovement(
@@ -200,8 +136,74 @@ class InventoryService:
             )
 
         StockMovement.objects.bulk_create(stock_movements, batch_size=100)
+
+    @transaction.atomic
+    def update_inventory_on_po_ordered(
+        self,
+        warehouse_id: int,
+        data: list[dict],
+        map_product_variant: dict,
+        map_product_warehouse: dict,
+    ) -> None:
+        """Update inventory when PO status becomes ORDERED (PURCHASE movement).
+
+        This handles:
+        - ProductVariantWarehouse.incoming_qty (per warehouse)
+        - ProductVariant.total_incoming_qty (global)
+
+        Args:
+            warehouse_id: The warehouse to update
+            data: List of dicts with product_variant_id and qty
+            map_product_variant: Dict mapping id -> ProductVariant.
+            map_product_warehouse: Dict mapping product_variant_id -> ProductVariantWarehouse.
+
+        Note:
+            Call record_multiple_stock_movements() separately to create movement records.
+            For better performance, provide pre-fetched maps when calling from purchasing service.
+        """
+        new_pvws: list[ProductVariantWarehouse] = []
+        update_pvws: list[ProductVariantWarehouse] = []
+        update_pv: list[ProductVariant] = []
+        update_fields_pvw = set()
+        update_fields_pv = set()
+
+        for item in data:
+            product_variant_id = item.get("product_variant_id")
+            qty = item.get("qty", 0)
+
+            pv = map_product_variant.get(product_variant_id)
+            if not pv:
+                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
+
+            pvw = map_product_warehouse.get(product_variant_id)
+            if not pvw:
+                pvw = ProductVariantWarehouse(
+                    product_variant=pv,
+                    warehouse_id=warehouse_id,
+                    incoming_qty=0,
+                    physical_qty=0,
+                )
+                new_pvws.append(pvw)
+            else:
+                update_pvws.append(pvw)
+
+            pvw.incoming_qty += qty
+            pvw.udate = timezone.now()
+            update_fields_pvw.add("incoming_qty")
+            update_fields_pvw.add("udate")
+
+            pv.total_incoming_qty += qty
+            pv.udate = timezone.now()
+            update_fields_pv.add("total_incoming_qty")
+            update_fields_pv.add("udate")
+            update_pv.append(pv)
+
         ProductVariantWarehouse.objects.bulk_create(new_pvws, batch_size=100)
-        ProductVariantWarehouse.objects.bulk_update(
-            update_pvws, fields=list(update_fields_pvw), batch_size=100
-        )
-        ProductVariant.objects.bulk_update(update_pv, fields=list(update_fields_pv), batch_size=100)
+        if update_pvws:
+            ProductVariantWarehouse.objects.bulk_update(
+                update_pvws, fields=list(update_fields_pvw), batch_size=100
+            )
+        if update_pv:
+            ProductVariant.objects.bulk_update(
+                update_pv, fields=list(update_fields_pv), batch_size=100
+            )

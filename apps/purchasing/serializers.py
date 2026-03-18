@@ -87,6 +87,13 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
         }
         read_only_fields = ["purchase_order_number"]
 
+    def validate(self, attrs: dict) -> dict:
+        if attrs.get("status") and attrs.get("status") != PurchaseOrder.POStatus.DRAFT:
+            raise serializers.ValidationError(
+                {"status": "Purchase Order must be created with DRAFT status"}
+            )
+        return attrs
+
     def validate_purchase_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
         if not value:
             raise serializers.ValidationError("No file provided.")
