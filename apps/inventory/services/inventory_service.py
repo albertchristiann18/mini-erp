@@ -162,6 +162,29 @@ class InventoryService:
                     update_pvws.append(pvw)
                     update_pv.append(pv)
 
+            if movement_type == StockMovement.MovementType.INBOUND:
+                field_change = "available_qty"
+                balance_before = pvw.available_qty
+
+                pvw.physical_qty += qty
+                pvw.incoming_qty -= qty
+                pvw.udate = timezone.now()
+                update_fields_pvw.add("physical_qty")
+                update_fields_pvw.add("incoming_qty")
+                update_fields_pvw.add("udate")
+
+                pv.total_available_qty += qty
+                pv.total_incoming_qty -= qty
+                pv.udate = timezone.now()
+                update_fields_pv.add("total_available_qty")
+                update_fields_pv.add("total_incoming_qty")
+                update_fields_pv.add("udate")
+
+                balance_after = pvw.available_qty
+                if do_update:
+                    update_pvws.append(pvw)
+                    update_pv.append(pv)
+
             stock_movements.append(
                 StockMovement(
                     product_variant_id=product_variant_id,
@@ -179,6 +202,6 @@ class InventoryService:
         StockMovement.objects.bulk_create(stock_movements, batch_size=100)
         ProductVariantWarehouse.objects.bulk_create(new_pvws, batch_size=100)
         ProductVariantWarehouse.objects.bulk_update(
-            update_pvws, fields=list(update_fields_pv), batch_size=100
+            update_pvws, fields=list(update_fields_pvw), batch_size=100
         )
         ProductVariant.objects.bulk_update(update_pv, fields=list(update_fields_pv), batch_size=100)

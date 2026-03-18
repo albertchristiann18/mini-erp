@@ -108,6 +108,7 @@ class PurchaseOrderDetail(DefaultModel):
 
     ordered_qty = models.IntegerField(default=0)
     received_qty = models.IntegerField(default=0)
+    updated_qty = models.IntegerField(default=0)  # for tracking changes in received qty
 
     received_date = models.DateField(null=True, blank=True)
     remarks = models.TextField(blank=True, null=True)

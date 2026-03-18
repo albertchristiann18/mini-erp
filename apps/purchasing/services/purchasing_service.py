@@ -1,7 +1,9 @@
+from datetime import datetime
 from typing import Dict, List
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.inventory.models import ProductVariant, StockMovement, Warehouse
 from apps.inventory.services.inventory_service import InventoryService
@@ -103,6 +105,8 @@ class PurchaseOrderService:
             - packing list mechanism
         """
         purchase_order_invoice_file = data.get("purchase_order_invoice_file")
+
+        delivery_order_number = data.get("delivery_order_number")
         delivery_order_file = data.get("delivery_order_file")
         delivery_order_invoice_file = data.get("delivery_order_invoice_file")
         # Validate status change if provided
@@ -127,15 +131,20 @@ class PurchaseOrderService:
             elif (
                 old_status == PurchaseOrder.POStatus.ORDERED
                 and new_status == PurchaseOrder.POStatus.SHIPPED
-                and (not po.delivery_order_file and delivery_order_file is None)
             ):
-                raise ValidationError("please upload the delivery order file")
+                if not po.delivery_order_number and delivery_order_number is None:
+                    raise ValidationError("please provide the delivery order number")
+                elif not po.delivery_order_file and delivery_order_file is None:
+                    raise ValidationError("please upload the delivery order file")
             elif (
                 old_status == PurchaseOrder.POStatus.SHIPPED
                 and new_status == PurchaseOrder.POStatus.DELIVERED
-                and (not po.delivery_order_invoice_file and delivery_order_invoice_file is None)
             ):
-                raise ValidationError("please upload the delivery order invoice file")
+                if not po.delivery_order_invoice_file and delivery_order_invoice_file is None:
+                    raise ValidationError("please upload the delivery order invoice file")
+
+                if not data.get("delivery_date"):
+                    po.delivery_date = timezone.now()
 
             if (
                 old_status == PurchaseOrder.POStatus.DRAFT
@@ -157,14 +166,45 @@ class PurchaseOrderService:
                     data=stored_data,
                     reference_number=po.purchase_order_number,
                 )
-            elif (
-                old_status == PurchaseOrder.POStatus.DELIVERED
-                and new_status == PurchaseOrder.POStatus.COMPLETED
-            ):
+            elif new_status == PurchaseOrder.POStatus.DELIVERED:
                 # do inventory pricing update after the update successfully saved
                 # ProductCogs, ProductVariantWarehouse, ProductVariant
 
-                pass
+                # search the pod for the updated_qty
+
+                stored_data = []
+                for item in data.get("order_details", []):
+                    receive_date_str = item.get("received_date")
+                    received_qty = item.get("received_qty", 0)
+                    if not receive_date_str or not received_qty:
+                        # skip if received date is not provided, need to log this
+                        continue
+                    receive_date = datetime.fromisoformat(receive_date_str.replace("Z", "+00:00"))
+                    if receive_date and item.get("ordered_qty", 0) == received_qty:
+                        # skip due to all items already received, so no need to update the inventory
+                        continue
+                    if receive_date and po.delivery_date and receive_date.date() < po.delivery_date:
+                        # skip if receved date smaller than delivery date
+                        # which means items already received before, so no need to update the inventory
+                        continue
+
+                    stored_data.append(
+                        {
+                            "product_variant_id": item.get("product_variant_id"),
+                            "qty": received_qty,
+                            "note": f"Stock movement for PO {po.purchase_order_number} inbound",
+                        }
+                    )
+                    inventory_service = InventoryService()
+                    inventory_service.record_multiple_stock_movements(
+                        warehouse_id=po.warehouse.id,
+                        movement_type=StockMovement.MovementType.INBOUND,
+                        data=stored_data,
+                        reference_number=delivery_order_number or po.delivery_order_number,
+                    )
+                    detail = po.order_details.get(id=item.get("id"))
+                    detail.updated_qty = received_qty - detail.updated_qty
+                    detail.save()
 
         if purchase_order_invoice_file:
             po_invoice_compressed_file = compress_pdf_file(purchase_order_invoice_file)
@@ -181,11 +221,13 @@ class PurchaseOrderService:
         # Extract order_details for separate handling
         details_data = data.pop("order_details", None)
 
+        updated_fields = ["udate"]
         # Update PO fields
         for attr, value in data.items():
             if attr != "id":  # Skip id field
+                updated_fields.append(attr)
                 setattr(po, attr, value)
-        po.save()
+        po.save(update_fields=updated_fields)
 
         # Update details if provided
         if details_data is not None:

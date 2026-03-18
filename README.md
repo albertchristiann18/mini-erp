@@ -240,3 +240,7 @@ uv run pytest
 ```bash
 docker compose -f docker-compose.test.yml run --rm test uv run pytest --reuse-db
 ```
+
+### standard for datetime format
+ISO 8601
+2026-03-03T10:49:31Z
