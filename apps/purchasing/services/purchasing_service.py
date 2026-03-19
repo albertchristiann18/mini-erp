@@ -28,63 +28,89 @@ class PurchaseOrderService:
         PurchaseOrder.POStatus.COMPLETED: [],
     }
 
-    def _handle_ordered_status_inventory(self, po: PurchaseOrder) -> None:
-        """Handle inventory update when PO status becomes ORDERED.
+    def _handle_status_inventory(
+        self,
+        po: PurchaseOrder,
+        new_status: str,
+        data: list[dict],
+    ) -> None:
+        """Handle inventory update for ORDER or DELIVERED status.
 
-        This updates:
-        - ProductVariantWarehouse.incoming_qty (for the warehouse)
-        - ProductVariant.total_incoming_qty (global total)
-        - StockMovement records
+        For ORDERED (PURCHASE movement):
+        - ProductVariantWarehouse.incoming_qty += qty
+        - ProductVariant.total_incoming_qty += qty
+
+        For DELIVERED (INBOUND movement):
+        - ProductVariantWarehouse.incoming_qty -= min(ordered_qty, received_qty)
+        - ProductVariantWarehouse.physical_qty += received_qty
+        - ProductVariant.total_incoming_qty -= min(ordered_qty, received_qty)
+        - ProductVariant.total_available_qty += received_qty
 
         Args:
-            po: PurchaseOrder instance that is now ORDERED
+            po: PurchaseOrder instance
+            new_status: Target status (ORDERED or DELIVERED)
+            data: List of item dicts with product_variant_id, qty (for ORDERED) or ordered_qty, received_qty (for DELIVERED)
         """
-        stored_data = []
-        product_variant_ids = []
-        for detail in po.order_details.all():
-            stored_data.append(
-                {
-                    "product_variant_id": str(detail.product_variant.id),
-                    "qty": detail.ordered_qty,
-                    "note": f"Stock movement for PO {po.purchase_order_number} purchase",
-                }
-            )
-            product_variant_ids.append(str(detail.product_variant.id))
+        if not data:
+            return
 
-        if stored_data:
-            product_variants = list(
-                ProductVariant.objects.select_for_update().filter(id__in=product_variant_ids)
-            )
-            product_variant_warehouses = list(
-                ProductVariantWarehouse.objects.select_for_update().filter(
-                    product_variant__in=product_variants, warehouse_id=po.warehouse.id
-                )
-            )
+        movement_type = (
+            StockMovement.MovementType.PURCHASE
+            if new_status == PurchaseOrder.POStatus.ORDERED
+            else StockMovement.MovementType.INBOUND
+        )
 
-            map_product_variant = {pv.id: pv for pv in product_variants}
-            map_product_warehouse = {
-                pvw.product_variant.id: pvw for pvw in product_variant_warehouses
-            }
-
-            inventory_service = InventoryService()
-            inventory_service.record_multiple_stock_movements(
-                warehouse_id=po.warehouse.id,
-                movement_type=StockMovement.MovementType.PURCHASE,
-                data=stored_data,
-                reference_number=po.purchase_order_number,
-                map_product_variant=map_product_variant,
-                map_product_warehouse=map_product_warehouse,
+        product_variant_ids = [item.get("product_variant_id") for item in data]
+        product_variants = list(
+            ProductVariant.objects.select_for_update().filter(id__in=product_variant_ids)
+        )
+        product_variant_warehouses = list(
+            ProductVariantWarehouse.objects.select_for_update().filter(
+                product_variant__in=product_variants, warehouse_id=po.warehouse.id
             )
+        )
+
+        map_product_variant = {pv.id: pv for pv in product_variants}
+        map_product_warehouse = {pvw.product_variant.id: pvw for pvw in product_variant_warehouses}
+
+        reference_number = (
+            po.purchase_order_number
+            if new_status == PurchaseOrder.POStatus.ORDERED
+            else po.delivery_order_number
+        )
+
+        inventory_service = InventoryService()
+        inventory_service.record_multiple_stock_movements(
+            warehouse_id=po.warehouse.id,
+            movement_type=movement_type,
+            data=data,
+            reference_number=reference_number,
+            map_product_variant=map_product_variant,
+            map_product_warehouse=map_product_warehouse,
+        )
+
+        if new_status == PurchaseOrder.POStatus.ORDERED:
             inventory_service.update_inventory_on_po_ordered(
                 warehouse_id=po.warehouse.id,
-                data=stored_data,
+                data=data,
                 map_product_variant=map_product_variant,
                 map_product_warehouse=map_product_warehouse,
             )
-
-        for detail in po.order_details.all():
-            detail.updated_qty = detail.ordered_qty
-            detail.save(update_fields=["updated_qty", "udate"])
+            for detail in po.order_details.all():
+                detail.updated_qty = detail.ordered_qty
+                detail.save(update_fields=["updated_qty", "udate"])
+        elif new_status == PurchaseOrder.POStatus.DELIVERED:
+            inventory_service.update_inventory_on_po_delivered(
+                warehouse_id=po.warehouse.id,
+                data=data,
+                map_product_variant=map_product_variant,
+                map_product_warehouse=map_product_warehouse,
+            )
+            for item in data:
+                detail = po.order_details.get(id=item.get("id"))
+                received_qty = item.get("received_qty", 0)
+                detail.updated_qty = detail.updated_qty + received_qty
+                detail.save(update_fields=["updated_qty", "udate"])
 
     @transaction.atomic
     def create_purchase_order(self, data: dict) -> None:
@@ -155,61 +181,46 @@ class PurchaseOrderService:
                     po.delivery_date = timezone.now()
 
             if (
-                old_status == PurchaseOrder.POStatus.DRAFT
-                and new_status == PurchaseOrder.POStatus.ORDERED
+                new_status == PurchaseOrder.POStatus.ORDERED
+                and old_status != PurchaseOrder.POStatus.ORDERED
             ):
-                self._handle_ordered_status_inventory(po)
+                stored_data = []
+                for detail in po.order_details.all():
+                    stored_data.append(
+                        {
+                            "product_variant_id": str(detail.product_variant.id),
+                            "qty": detail.ordered_qty,
+                            "note": f"Stock movement for PO {po.purchase_order_number} purchase",
+                        }
+                    )
+                self._handle_status_inventory(po, new_status, stored_data)
 
             if new_status == PurchaseOrder.POStatus.DELIVERED:
-                stored_data = []
                 valid_items = []
                 for item in data.get("order_details", []):
                     receive_date_str = item.get("received_date")
                     received_qty = item.get("received_qty", 0)
+                    ordered_qty = item.get("ordered_qty", 0)
                     if not receive_date_str or not received_qty:
                         continue
                     receive_date = datetime.fromisoformat(receive_date_str.replace("Z", "+00:00"))
-                    if receive_date and item.get("ordered_qty", 0) == received_qty:
+                    if receive_date and ordered_qty == received_qty:
                         continue
                     if receive_date and po.delivery_date and receive_date.date() < po.delivery_date:
                         continue
 
-                    stored_data.append(
+                    valid_items.append(
                         {
+                            "id": item.get("id"),
                             "product_variant_id": item.get("product_variant_id"),
-                            "qty": received_qty,
+                            "ordered_qty": ordered_qty,
+                            "received_qty": received_qty,
                             "note": f"Stock movement for PO {po.purchase_order_number} inbound",
                         }
                     )
-                    valid_items.append(item)
 
-                if stored_data:
-                    product_variant_ids = [item.get("product_variant_id") for item in stored_data]
-                    product_variants = ProductVariant.objects.filter(id__in=product_variant_ids)
-                    product_variant_warehouses = list(
-                        ProductVariantWarehouse.objects.filter(
-                            product_variant__in=product_variants, warehouse_id=po.warehouse.id
-                        )
-                    )
-
-                    map_product_variant = {pv.id: pv for pv in product_variants}
-                    map_product_warehouse = {
-                        pvw.product_variant.id: pvw for pvw in product_variant_warehouses
-                    }
-
-                    inventory_service = InventoryService()
-                    inventory_service.record_multiple_stock_movements(
-                        warehouse_id=po.warehouse.id,
-                        movement_type=StockMovement.MovementType.INBOUND,
-                        data=stored_data,
-                        reference_number=delivery_order_number or po.delivery_order_number,
-                        map_product_variant=map_product_variant,
-                        map_product_warehouse=map_product_warehouse,
-                    )
-                    for item in valid_items:
-                        detail = po.order_details.get(id=item.get("id"))
-                        detail.updated_qty = detail.updated_qty + item.get("received_qty", 0)
-                        detail.save(update_fields=["updated_qty", "udate"])
+                if valid_items:
+                    self._handle_status_inventory(po, new_status, valid_items)
 
         if purchase_order_invoice_file:
             po_invoice_compressed_file = compress_pdf_file(purchase_order_invoice_file)

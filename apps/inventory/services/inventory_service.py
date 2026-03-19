@@ -207,3 +207,92 @@ class InventoryService:
             ProductVariant.objects.bulk_update(
                 update_pv, fields=list(update_fields_pv), batch_size=100
             )
+
+    @transaction.atomic
+    def update_inventory_on_po_delivered(
+        self,
+        warehouse_id: int,
+        data: list[dict],
+        map_product_variant: Optional[dict] = None,
+        map_product_warehouse: Optional[dict] = None,
+    ) -> None:
+        """Update inventory when PO status becomes DELIVERED (INBOUND movement).
+
+        This handles:
+        - ProductVariantWarehouse.incoming_qty (decrease by ordered_qty)
+        - ProductVariantWarehouse.physical_qty (increase by received_qty)
+        - ProductVariant.total_incoming_qty (decrease by ordered_qty)
+        - ProductVariant.total_available_qty (increase by received_qty)
+
+        Args:
+            warehouse_id: The warehouse to update
+            data: List of dicts with product_variant_id, ordered_qty, received_qty
+            map_product_variant: Dict mapping id -> ProductVariant. If not provided, will query with select_for_update.
+            map_product_warehouse: Dict mapping product_variant_id -> ProductVariantWarehouse. If not provided, will query with select_for_update.
+
+        Note:
+            Special case: if received_qty > ordered_qty, incoming_qty is reduced by ordered_qty
+            (not received_qty), and physical_qty is increased by received_qty.
+        """
+        product_variant_ids = [item.get("product_variant_id") for item in data]
+        if not product_variant_ids:
+            return
+
+        if map_product_variant is None or map_product_warehouse is None:
+            product_variants = list(
+                ProductVariant.objects.select_for_update().filter(id__in=product_variant_ids)
+            )
+            product_variant_warehouses = list(
+                ProductVariantWarehouse.objects.select_for_update().filter(
+                    product_variant__in=product_variants, warehouse_id=warehouse_id
+                )
+            )
+            map_product_variant = {pv.id: pv for pv in product_variants}
+            map_product_warehouse = {
+                pvw.product_variant.id: pvw for pvw in product_variant_warehouses
+            }
+
+        update_pvws: list[ProductVariantWarehouse] = []
+        update_pv: list[ProductVariant] = []
+        update_fields_pvw = set()
+        update_fields_pv = set()
+
+        for item in data:
+            product_variant_id = item.get("product_variant_id")
+            ordered_qty = item.get("ordered_qty", 0)
+            received_qty = item.get("received_qty", 0)
+
+            pv = map_product_variant.get(product_variant_id)
+            if not pv:
+                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
+
+            pvw = map_product_warehouse.get(product_variant_id)
+            if not pvw:
+                pvw = ProductVariantWarehouse(
+                    product_variant=pv,
+                    warehouse_id=warehouse_id,
+                    incoming_qty=0,
+                    physical_qty=0,
+                )
+
+            incoming_decrease = min(ordered_qty, received_qty)
+            pvw.incoming_qty -= incoming_decrease
+            pvw.physical_qty += received_qty
+            pvw.udate = timezone.now()
+            update_fields_pvw.update(["incoming_qty", "physical_qty", "udate"])
+            update_pvws.append(pvw)
+
+            pv.total_incoming_qty -= incoming_decrease
+            pv.total_available_qty += received_qty
+            pv.udate = timezone.now()
+            update_fields_pv.update(["total_incoming_qty", "total_available_qty", "udate"])
+            update_pv.append(pv)
+
+        if update_pvws:
+            ProductVariantWarehouse.objects.bulk_update(
+                update_pvws, fields=list(update_fields_pvw), batch_size=100
+            )
+        if update_pv:
+            ProductVariant.objects.bulk_update(
+                update_pv, fields=list(update_fields_pv), batch_size=100
+            )
