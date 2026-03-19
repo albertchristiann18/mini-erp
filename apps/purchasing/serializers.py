@@ -13,6 +13,7 @@ class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
 
     product_variant_id = serializers.CharField(write_only=True)
     product_variant_name = serializers.CharField(source="product_variant.name", read_only=True)
+    updated_qty = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = PurchaseOrderDetail
@@ -22,11 +23,12 @@ class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
             "product_variant_name",
             "ordered_qty",
             "received_qty",
+            "updated_qty",
             "unit_price_base",
             "total_price_base",
             "remarks",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "updated_qty"]
 
     def create(self, validated_data: Dict[str, Any]) -> PurchaseOrderDetail:
         product_variant_id = validated_data.pop("product_variant_id")
@@ -152,6 +154,39 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
             "delivery_order_file": {"required": False},
             "delivery_order_invoice_file": {"required": False},
         }
+
+    def validate(self, attrs: dict) -> dict:
+        if not self.instance:
+            return attrs
+
+        order_details = attrs.get("order_details")
+        if not order_details:
+            return attrs
+
+        current_status = self.instance.status
+        incoming_ids = {d.get("id") for d in order_details if d.get("id")}
+
+        if current_status == PurchaseOrder.POStatus.DRAFT:
+            return attrs
+
+        existing_ids = set(self.instance.order_details.values_list("id", flat=True))
+        removed_ids = existing_ids - incoming_ids
+        if removed_ids:
+            raise serializers.ValidationError(
+                {
+                    "order_details": f"Cannot remove details when status is {current_status}. Only DRAFT status allows removing details."
+                }
+            )
+
+        new_details = [d for d in order_details if not d.get("id")]
+        if new_details:
+            raise serializers.ValidationError(
+                {
+                    "order_details": f"Cannot add new details when status is {current_status}. Only DRAFT status allows adding new details."
+                }
+            )
+
+        return attrs
 
     def validate_purchase_order_invoice_file(self, value: UploadedFile) -> UploadedFile:
         if not value:

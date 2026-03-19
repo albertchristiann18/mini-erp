@@ -1,6 +1,6 @@
 import factory
 
-from apps.inventory.models import Category, Product, ProductVariant, Warehouse
+from apps.inventory.models import Category, Product, ProductCogs, ProductVariant, Warehouse
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company, Marketplace
 
@@ -90,3 +90,19 @@ class PurchaseOrderDetailFactory(factory.django.DjangoModelFactory):
     ordered_qty = 50
     unit_price_base = 10000
     total_price_base = 500000
+
+
+class ProductCogsFactory(factory.django.DjangoModelFactory):
+    """Factory for creating test ProductCogs instances"""
+
+    class Meta:
+        model = ProductCogs
+
+    product_variant = factory.SubFactory(ProductVariantFactory)  # type: ignore[no-untyped-call]
+    warehouse = factory.SubFactory(WarehouseFactory)  # type: ignore[no-untyped-call]
+    purchase_date = "2026-03-01"
+    price_rmb = 1000
+    exchange_rate = 2200
+    cogs_amount = 2200000
+    original_qty = 50
+    remaining_qty = 50

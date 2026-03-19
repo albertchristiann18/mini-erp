@@ -170,21 +170,45 @@ class ProductVariantWarehouse(DefaultModel):
 
 
 class ProductCogs(DefaultModel):
-    """FIFO inventory layers per variant per warehouse"""
+    """FIFO inventory layers per variant per warehouse.
+
+    This model tracks the cost of goods sold (COGS) for inventory items using FIFO method.
+
+    Fields:
+    - original_qty: Total quantity that came in from the PO (accumulates with each delivery update).
+                     This represents the inbound quantity from purchase orders.
+    - remaining_qty: Current available quantity for sales/consumption.
+                     This ONLY decreases when there are actual outbound/sales transactions.
+                     It does NOT change when PO received_qty is updated.
+    - cogs_amount: Total cost = unit_price * remaining_qty
+    """
 
     id = ULIDField(
         primary_key=True, default=generate_ulid, editable=False, db_column="product_cogs_id"
     )
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
+    purchase_order_detail = models.ForeignKey(
+        "purchasing.PurchaseOrderDetail",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cogs_records",
+    )
 
     purchase_date = models.DateField()
     price_rmb = models.BigIntegerField()
     exchange_rate = models.DecimalField(max_digits=15, decimal_places=4)
     cogs_amount = models.BigIntegerField()  # In IDR
 
-    original_qty = models.IntegerField(default=0)
-    remaining_qty = models.IntegerField(default=0)
+    original_qty = models.IntegerField(
+        default=0,
+        help_text="Total quantity that came in from PO (accumulates with each delivery)",
+    )
+    remaining_qty = models.IntegerField(
+        default=0,
+        help_text="Current available quantity. Only decreases on actual sales/outbound.",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
