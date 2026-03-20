@@ -2,7 +2,7 @@ import io
 import os
 import tempfile
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, Union
 
 import fitz
 from django.core.exceptions import ValidationError
@@ -128,36 +128,6 @@ def get_default_shipping_config() -> dict:
             "Tokopedia_TikTok": {"use_general_config": True},
         },
     }
-
-
-def is_valid_status_transition(
-    current_status: str,
-    new_status: str,
-    status_map: Dict[str, List[str]],
-) -> bool:
-    """
-    Check if a status transition is valid.
-
-    Args:
-        current_status: The current status
-        new_status: The desired new status
-        status_map: Dictionary mapping current status to list of allowed next statuses
-            Example:
-            {
-                "DRAFT": ["ORDERED"],
-                "ORDERED": ["SHIPPED", "DRAFT"],
-                "SHIPPED": ["DELIVERED"],
-                "DELIVERED": ["COMPLETED"],
-                "COMPLETED": [],
-            }
-
-    Returns:
-        True if transition is valid, False otherwise
-    """
-    if current_status == new_status:
-        return True  # Allow same status (idempotent)
-    allowed = status_map.get(current_status, [])
-    return new_status in allowed
 
 
 def is_valid_pdf(file_input: Union[UploadedFile, str], max_size_mb: int = 2) -> tuple[bool, str]:

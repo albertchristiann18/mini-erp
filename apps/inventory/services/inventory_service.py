@@ -85,6 +85,7 @@ class InventoryService:
     def record_multiple_stock_movements(
         self,
         warehouse_id: int,
+        company_id: int,
         data: list[dict],
         map_product_variant: dict,
         reference_number: Optional[str] = None,
@@ -104,6 +105,13 @@ class InventoryService:
             product_variant_id = item.get("product_variant_id")
             pv = map_product_variant.get(product_variant_id)
             if not pv:
+                pv = map_product_variant.get(str(product_variant_id))
+            if not pv:
+                pv_id = ULIDField().to_python(product_variant_id)
+                pv = map_product_variant.get(pv_id)
+            if not pv:
+                pv = map_product_variant.get(str(pv_id))
+            if not pv:
                 raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
 
             qty = item.get("qty", 0)
@@ -113,6 +121,7 @@ class InventoryService:
 
             stock_movements.append(
                 StockMovement(
+                    company_id=company_id,
                     product_variant_id=product_variant_id,
                     warehouse_id=warehouse_id,
                     quantity=qty,
@@ -145,10 +154,12 @@ class InventoryService:
         - ProductVariantWarehouse.physical_qty += received_qty
         - ProductVariant.total_incoming_qty -= ordered_qty
         - ProductVariant.total_available_qty += received_qty
+        - Create COGS record
 
         For INBOUND (DELIVERED) - subsequent (already_processed > 0):
         - ProductVariantWarehouse.physical_qty += qty_diff
         - ProductVariant.total_available_qty += qty_diff
+        - Update COGS record if exists
 
         Args:
             po: PurchaseOrder instance (must have warehouse.id attribute)
@@ -168,106 +179,48 @@ class InventoryService:
             )
         )
 
-        map_product_variant = {pv.id: pv for pv in product_variants}
-        map_product_warehouse = {pvw.product_variant.id: pvw for pvw in product_variant_warehouses}
+        map_product_variant = {str(pv.id): pv for pv in product_variants}
+        map_product_warehouse = {
+            str(pvw.product_variant.id): pvw for pvw in product_variant_warehouses
+        }
 
-        movements = []
-
-        if new_status == PurchaseOrder.POStatus.ORDERED:
-            movement_type = StockMovement.MovementType.PURCHASE
-            for item in data:
-                pv_id = item.get("product_variant_id")
-                pvw = map_product_warehouse.get(pv_id)
-                movements.append(
-                    {
-                        "product_variant_id": pv_id,
-                        "qty": item.get("ordered_qty", 0),
-                        "field_change": "incoming_qty",
-                        "qty_before": pvw.incoming_qty if pvw else 0,
-                        "note": item.get("note"),
-                    }
+        reference_number = getattr(po, "purchase_order_number", None)
+        existing_cogs_map: dict = {}
+        if new_status == PurchaseOrder.POStatus.DELIVERED and reference_number:
+            existing_cogs_map = {
+                str(cogs.product_variant_id): cogs
+                for cogs in ProductCogs.objects.select_for_update().filter(
+                    product_variant_id__in=product_variant_ids,
+                    warehouse=po.warehouse,
+                    reference_number=reference_number,
                 )
-
-        elif new_status == PurchaseOrder.POStatus.DELIVERED:
-            movement_type = StockMovement.MovementType.INBOUND
-            for item in data:
-                pv_id = item.get("product_variant_id")
-                pvw = map_product_warehouse.get(pv_id)
-                ordered_qty = item.get("ordered_qty", 0)
-                received_qty = item.get("received_qty", 0)
-                already_processed = item.get("updated_qty", 0) or 0
-
-                if already_processed == 0:
-                    movements.append(
-                        {
-                            "product_variant_id": pv_id,
-                            "qty": ordered_qty,
-                            "field_change": "incoming_qty",
-                            "qty_before": pvw.incoming_qty if pvw else 0,
-                            "note": item.get("note"),
-                        }
-                    )
-                    movements.append(
-                        {
-                            "product_variant_id": pv_id,
-                            "qty": received_qty,
-                            "field_change": "physical_qty",
-                            "qty_before": pvw.physical_qty if pvw else 0,
-                            "note": item.get("note"),
-                        }
-                    )
-                else:
-                    qty_diff = received_qty - already_processed
-                    if qty_diff != 0:
-                        movements.append(
-                            {
-                                "product_variant_id": pv_id,
-                                "qty": qty_diff,
-                                "field_change": "physical_qty",
-                                "qty_before": pvw.physical_qty if pvw else 0,
-                                "note": item.get("note"),
-                            }
-                        )
-
-        if movements:
-            self.record_multiple_stock_movements(
-                warehouse_id=po.warehouse.id,
-                data=movements,
-                map_product_variant=map_product_variant,
-                reference_number=po.purchase_order_number,
-                movement_type=movement_type,
-            )
+            }
 
         new_pvws: list[ProductVariantWarehouse] = []
         update_pvws: list[ProductVariantWarehouse] = []
         update_pv: list[ProductVariant] = []
         update_fields_pvw = set()
         update_fields_pv = set()
-
         create_cogs_records: list[ProductCogs] = []
         update_cogs_records: list[ProductCogs] = []
-        existing_cogs_map: dict = {}
-
-        if new_status == PurchaseOrder.POStatus.DELIVERED:
-            detail_ids = [item.get("detail_id") for item in data if item.get("detail_id")]
-            if detail_ids:
-                existing_cogs_map = {
-                    cogs.purchase_order_detail_id: cogs
-                    for cogs in ProductCogs.objects.filter(purchase_order_detail_id__in=detail_ids)
-                }
+        movements: list[dict] = []
 
         for item in data:
             product_variant_id = item.get("product_variant_id")
-            detail_id = item.get("detail_id")
+            ordered_qty = item.get("ordered_qty", 0)
+            received_qty = item.get("received_qty", 0)
+            already_processed = item.get("updated_qty", 0) or 0
+            qty_diff = received_qty - already_processed
 
             pv = map_product_variant.get(product_variant_id)
             if not pv:
-                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
+                pv = ProductVariant.objects.get(id=product_variant_id)
 
             pvw = map_product_warehouse.get(product_variant_id)
             created_pvw = False
             if not pvw:
                 pvw = ProductVariantWarehouse(
+                    company=po.company,
                     product_variant=pv,
                     warehouse_id=po.warehouse.id,
                     incoming_qty=0,
@@ -278,52 +231,76 @@ class InventoryService:
             else:
                 update_pvws.append(pvw)
 
-            if movement_type == StockMovement.MovementType.PURCHASE:
-                ordered_qty = item.get("ordered_qty", 0)
+            if new_status == PurchaseOrder.POStatus.ORDERED:
                 pvw.incoming_qty += ordered_qty
                 update_fields_pvw.add("incoming_qty")
 
                 pv.total_incoming_qty += ordered_qty
                 update_fields_pv.add("total_incoming_qty")
 
-            elif movement_type == StockMovement.MovementType.INBOUND:
-                ordered_qty = item.get("ordered_qty", 0)
-                received_qty = item.get("received_qty", 0)
-                already_processed = item.get("updated_qty", 0) or 0
+                movements.append(
+                    {
+                        "product_variant_id": product_variant_id,
+                        "qty": ordered_qty,
+                        "field_change": "incoming_qty",
+                        "qty_before": pvw.incoming_qty - ordered_qty,
+                        "note": item.get("note"),
+                    }
+                )
 
+            elif new_status == PurchaseOrder.POStatus.DELIVERED:
                 if already_processed == 0:
                     pvw.incoming_qty -= ordered_qty
                     pvw.physical_qty += received_qty
-                    update_fields_pvw.update(["incoming_qty", "physical_qty"])
+                    if not created_pvw:
+                        update_fields_pvw.update(["incoming_qty", "physical_qty"])
 
                     pv.total_incoming_qty -= ordered_qty
                     pv.total_available_qty += received_qty
                     update_fields_pv.update(["total_incoming_qty", "total_available_qty"])
 
-                    if received_qty > 0 and detail_id:
-                        unit_price_base = item.get("unit_price_base", 0) or 0
-                        unit_price_foreign = item.get("unit_price_foreign", 0) or 0
-                        exchange_rate = item.get("exchange_rate", 1) or 1
-                        received_date = item.get("received_date") or timezone.now().date()
+                    movements.append(
+                        {
+                            "product_variant_id": product_variant_id,
+                            "qty": ordered_qty,
+                            "field_change": "incoming_qty",
+                            "qty_before": pvw.incoming_qty + ordered_qty,
+                            "note": item.get("note"),
+                        }
+                    )
+                    movements.append(
+                        {
+                            "product_variant_id": product_variant_id,
+                            "qty": received_qty,
+                            "field_change": "physical_qty",
+                            "qty_before": pvw.physical_qty - received_qty,
+                            "note": item.get("note"),
+                        }
+                    )
+
+                    if received_qty > 0:
+                        unit_price_foreign = (
+                            item.get("discounted_unit_price_foreign")
+                            or item.get("unit_price_foreign")
+                            or 0
+                        )
+                        exchange_rate = item.get("exchange_rate") or 1
+                        invoice_date = getattr(po, "invoice_date", None) or timezone.now().date()
 
                         if unit_price_foreign and exchange_rate and exchange_rate != 1:
                             price_rmb = unit_price_foreign
-                            cogs_amount = int(
-                                float(unit_price_foreign) * float(exchange_rate) * received_qty
-                            )
+                            cogs_amount = int(float(unit_price_foreign) * float(exchange_rate))
                         else:
-                            price_rmb = unit_price_base
-                            cogs_amount = unit_price_base * received_qty
-
-                        ulid_field = ULIDField()
-                        converted_detail_id = ulid_field.to_python(detail_id)
+                            price_rmb = 0
+                            cogs_amount = item.get("unit_price_base") or 0
 
                         create_cogs_records.append(
                             ProductCogs(
+                                company=po.company,
                                 product_variant=pv,
                                 warehouse=po.warehouse,
-                                purchase_order_detail_id=converted_detail_id,
-                                purchase_date=received_date,
+                                reference_number=reference_number,
+                                purchase_date=invoice_date,
                                 price_rmb=price_rmb,
                                 exchange_rate=exchange_rate,
                                 cogs_amount=cogs_amount,
@@ -332,7 +309,6 @@ class InventoryService:
                             )
                         )
                 else:
-                    qty_diff = received_qty - already_processed
                     if qty_diff != 0:
                         pvw.physical_qty += qty_diff
                         update_fields_pvw.add("physical_qty")
@@ -340,35 +316,55 @@ class InventoryService:
                         pv.total_available_qty += qty_diff
                         update_fields_pv.add("total_available_qty")
 
+                        movements.append(
+                            {
+                                "product_variant_id": product_variant_id,
+                                "qty": qty_diff,
+                                "field_change": "physical_qty",
+                                "qty_before": pvw.physical_qty - qty_diff,
+                                "note": item.get("note"),
+                            }
+                        )
+
                         incoming_adjustment = already_processed - received_qty
-                        if incoming_adjustment > 0:
+                        if incoming_adjustment != 0:
                             pvw.incoming_qty += incoming_adjustment
                             update_fields_pvw.add("incoming_qty")
 
                             pv.total_incoming_qty += incoming_adjustment
                             update_fields_pv.add("total_incoming_qty")
 
-                        if detail_id:
-                            ulid_field = ULIDField()
-                            converted_detail_id = ulid_field.to_python(detail_id)
-                            existing_cogs = existing_cogs_map.get(converted_detail_id)
-                            if existing_cogs:
-                                existing_cogs.original_qty = received_qty
-                                if qty_diff > 0:
-                                    existing_cogs.remaining_qty += qty_diff
-                                unit_price_base = item.get("unit_price_base", 0) or 0
-                                existing_cogs.cogs_amount = (
-                                    unit_price_base * existing_cogs.remaining_qty
-                                )
-                                update_cogs_records.append(existing_cogs)
+                        existing_cogs = existing_cogs_map.get(product_variant_id)
+                        if existing_cogs:
+                            existing_cogs.original_qty = received_qty
+                            existing_cogs.remaining_qty += qty_diff
+                            existing_cogs.cogs_amount = int(
+                                float(received_qty)
+                                * float(existing_cogs.price_rmb)
+                                * float(existing_cogs.exchange_rate)
+                            )
+                            update_cogs_records.append(existing_cogs)
 
             pvw.udate = timezone.now()
             pv.udate = timezone.now()
             update_fields_pvw.add("udate")
             update_fields_pv.add("udate")
-            if created_pvw:
-                update_pvws.append(pvw)
             update_pv.append(pv)
+
+        if movements:
+            movement_type = (
+                StockMovement.MovementType.PURCHASE
+                if new_status == PurchaseOrder.POStatus.ORDERED
+                else StockMovement.MovementType.INBOUND
+            )
+            self.record_multiple_stock_movements(
+                warehouse_id=po.warehouse.id,
+                company_id=po.company.id,
+                data=movements,
+                map_product_variant=map_product_variant,
+                reference_number=po.purchase_order_number,
+                movement_type=movement_type,
+            )
 
         ProductVariantWarehouse.objects.bulk_create(new_pvws, batch_size=100)
         if update_pvws:

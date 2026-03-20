@@ -175,12 +175,14 @@ class ProductCogs(DefaultModel):
     This model tracks the cost of goods sold (COGS) for inventory items using FIFO method.
 
     Fields:
+    - reference_number: Identifier for the source document (e.g., PO purchase_order_number)
+    - purchase_date: Date from PurchaseOrder.invoice_date
+    - price_rmb: Unit price in RMB from PO detail (unit_price_foreign)
+    - exchange_rate: Exchange rate from PO (PurchaseOrder.exchange_rate)
+    - cogs_amount: Unit price in IDR = price_rmb * exchange_rate
     - original_qty: Total quantity that came in from the PO (accumulates with each delivery update).
-                     This represents the inbound quantity from purchase orders.
     - remaining_qty: Current available quantity for sales/consumption.
-                     This ONLY decreases when there are actual outbound/sales transactions.
-                     It does NOT change when PO received_qty is updated.
-    - cogs_amount: Total cost = unit_price * remaining_qty
+                    This ONLY decreases when there are actual outbound/sales transactions.
     """
 
     id = ULIDField(
@@ -188,18 +190,20 @@ class ProductCogs(DefaultModel):
     )
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
-    purchase_order_detail = models.ForeignKey(
-        "purchasing.PurchaseOrderDetail",
-        on_delete=models.SET_NULL,
-        null=True,
+    reference_number = models.CharField(
+        max_length=100,
+        default="",
         blank=True,
-        related_name="cogs_records",
+        db_index=True,
+        help_text="Source document reference (e.g., PO purchase_order_number)",
     )
 
-    purchase_date = models.DateField()
-    price_rmb = models.BigIntegerField()
-    exchange_rate = models.DecimalField(max_digits=15, decimal_places=4)
-    cogs_amount = models.BigIntegerField()  # In IDR
+    purchase_date = models.DateField(help_text="Date from PurchaseOrder.invoice_date")
+    price_rmb = models.BigIntegerField(help_text="Unit price in RMB (unit_price_foreign)")
+    exchange_rate = models.DecimalField(
+        max_digits=15, decimal_places=4, help_text="Exchange rate from PO"
+    )
+    cogs_amount = models.BigIntegerField(help_text="Unit price in IDR = price_rmb * exchange_rate")
 
     original_qty = models.IntegerField(
         default=0,
@@ -213,6 +217,9 @@ class ProductCogs(DefaultModel):
 
     class Meta:
         ordering = ["-purchase_date"]
+        indexes = [
+            models.Index(fields=["product_variant", "warehouse", "reference_number"]),
+        ]
 
 
 class ProductVariantMarketplace(DefaultModel):

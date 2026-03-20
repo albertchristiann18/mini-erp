@@ -48,7 +48,7 @@ class ProductVariantFactory(factory.django.DjangoModelFactory):
 
     name = "Test Product Variant"
     product = factory.SubFactory(ProductFactory)  # type: ignore[no-untyped-call]
-    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
+    company = factory.LazyAttribute(lambda o: o.product.company if o.product else None)  # type: ignore[attr-defined]
     variant_values = {}
 
 
@@ -74,7 +74,7 @@ class PurchaseOrderFactory(factory.django.DjangoModelFactory):
     company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
     supplier_name = "Test Supplier"
     status = "DRAFT"
-    total_qty = 100
+    total_ordered_qty = 100
     total_amount = 1000000
 
 
@@ -98,11 +98,13 @@ class ProductCogsFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = ProductCogs
 
+    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
     product_variant = factory.SubFactory(ProductVariantFactory)  # type: ignore[no-untyped-call]
     warehouse = factory.SubFactory(WarehouseFactory)  # type: ignore[no-untyped-call]
+    reference_number = "PO-TEST-001"
     purchase_date = "2026-03-01"
     price_rmb = 1000
     exchange_rate = 2200
-    cogs_amount = 2200000
+    cogs_amount = factory.LazyAttribute(lambda o: int(o.price_rmb * o.exchange_rate))
     original_qty = 50
     remaining_qty = 50

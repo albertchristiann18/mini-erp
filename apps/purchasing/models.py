@@ -42,14 +42,12 @@ class PurchaseOrder(DefaultModel):
 
     forwarder_name = models.CharField(max_length=255, blank=True, null=True)
     shop_services = models.CharField(max_length=255, blank=True, null=True)  # jasa belanja
-    comission_fee_pct = models.IntegerField(default=0, blank=True, null=True)
-    comission_fee = models.DecimalField(
-        max_digits=10, decimal_places=3, blank=True, null=True
-    )  # IDR
+    commission_fee_pct = models.IntegerField(default=0, blank=True, null=True)
+    commission_fee = models.BigIntegerField(blank=True, null=True)  # IDR
 
     delivery_fee = models.DecimalField(
         max_digits=10, decimal_places=3, blank=True, null=True
-    )  # RMB / else, from supplier to china
+    )  # RMB / else, from china supplier to china warehouse
     currency = models.CharField(max_length=10, blank=True, null=True)  # RMB, USD, etc
     exchange_rate = models.DecimalField(
         max_digits=10, decimal_places=3, blank=True, null=True
@@ -63,7 +61,8 @@ class PurchaseOrder(DefaultModel):
     )
     packing_list_file = models.FileField(upload_to="po/packing_lists/", null=True, blank=True)
 
-    total_qty = models.IntegerField(default=0)
+    total_ordered_qty = models.IntegerField(default=0)
+    total_received_qty = models.IntegerField(default=0)
     cbm = models.DecimalField(max_digits=10, decimal_places=3, blank=True, null=True)  # CBM
     weight = models.DecimalField(max_digits=10, decimal_places=3, blank=True, null=True)  # kg
 
@@ -82,7 +81,7 @@ class PurchaseOrder(DefaultModel):
         if not self.shipping_fee:
             return Decimal("0.0")
 
-        return round_decimal(self.shipping_fee / self.total_qty)
+        return round_decimal(self.shipping_fee / self.total_ordered_qty)
 
     def cost_ratio_cogs(self) -> Decimal:
         if self.procure_amount and self.total_item_amount and self.shipping_fee:
