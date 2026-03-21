@@ -1,19 +1,19 @@
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
 
 from apps.inventory.models import ProductVariant, Warehouse
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from apps.purchasing.services.purchasing_service import PurchaseOrderService
 from core.models import Company
-from core.utils import compress_pdf_file, is_valid_pdf
+from core.utils import compress_pdf_file
 
 
 class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
     """Serializer for Purchase Order Details"""
 
+    id = serializers.CharField(required=False)
     product_variant_id = serializers.CharField(write_only=True)
     product_variant_name = serializers.CharField(source="product_variant.name", read_only=True)
     updated_qty = serializers.IntegerField(read_only=True)
@@ -37,7 +37,7 @@ class PurchaseOrderDetailSerializer(serializers.ModelSerializer):
             "discounted_total_price_base",
             "remarks",
         ]
-        read_only_fields = ["id", "updated_qty"]
+        read_only_fields = ["updated_qty"]
 
     def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         return self._calculate_prices(attrs)
@@ -291,14 +291,14 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
 
         return po
 
-    def to_internal_value(self, data: dict) -> dict:
-        ret = super().to_internal_value(data)
+    def to_internal_value(self, data: dict) -> dict[str, Any]:
+        ret: dict[str, Any] = super().to_internal_value(data)
         exchange_rate = ret.get("exchange_rate")
         self._mock_po = type("PO", (), {"exchange_rate": exchange_rate})()
         return ret
 
-    def to_representation(self, instance: PurchaseOrder) -> dict:
-        ret = super().to_representation(instance)
+    def to_representation(self, instance: PurchaseOrder) -> dict[str, Any]:
+        ret: dict[str, Any] = super().to_representation(instance)
         ret["_purchase_order"] = instance
         return ret
 
@@ -367,7 +367,7 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
         current_status = self.instance.status
         new_status = attrs.get("status")
 
-        if new_status is not None:
+        if new_status is not None and new_status != current_status:
             allowed = PurchaseOrderService.STATUS_TRANSITIONS.get(current_status, [])
             if new_status not in allowed:
                 raise serializers.ValidationError(
@@ -413,15 +413,6 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
                 if not current_invoice_date and not new_invoice_date:
                     raise serializers.ValidationError(
                         {"invoice_date": "Invoice date is required when moving to ORDERED status."}
-                    )
-
-                order_details = attrs.get("order_details")
-                existing_details = list(self.instance.order_details.all())
-                if not order_details and not existing_details:
-                    raise serializers.ValidationError(
-                        {
-                            "order_details": "At least one order detail is required when moving to ORDERED status."
-                        }
                     )
 
                 current_commission_fee_pct = self.instance.commission_fee_pct
@@ -514,102 +505,58 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
                 )
 
         order_details = attrs.get("order_details")
-        if not order_details:
-            return attrs
 
-        incoming_ids = {d.get("id") for d in order_details if d.get("id")}
+        if (
+            new_status == PurchaseOrder.POStatus.ORDERED
+            and current_status == PurchaseOrder.POStatus.DRAFT
+        ):
+            if not order_details:
+                raise serializers.ValidationError(
+                    {
+                        "order_details": "At least one order detail is required when moving to ORDERED status."
+                    }
+                )
+            for detail_data in order_details:
+                detail_id = detail_data.get("id")
+                if detail_id:
+                    new_ordered_qty = detail_data.get("ordered_qty")
+                    if new_ordered_qty is not None:
+                        raise serializers.ValidationError(
+                            {
+                                "order_details": "Cannot change ordered_qty when transitioning from DRAFT to ORDERED status."
+                            }
+                        )
 
-        if current_status == PurchaseOrder.POStatus.DRAFT:
-            new_status = attrs.get("status")
-            if new_status == PurchaseOrder.POStatus.ORDERED:
-                existing_details_map = {
-                    str(detail.id): detail for detail in self.instance.order_details.all()
-                }
-                for detail_data in order_details:
-                    detail_id = detail_data.get("id")
-                    if detail_id:
-                        existing_detail = existing_details_map.get(detail_id)
-                        if existing_detail:
-                            new_ordered_qty = detail_data.get("ordered_qty")
-                            if new_ordered_qty is not None:
-                                existing_ordered_qty = getattr(existing_detail, "ordered_qty", None)
-                                if (
-                                    existing_ordered_qty is not None
-                                    and existing_ordered_qty != new_ordered_qty
-                                ):
-                                    raise serializers.ValidationError(
-                                        {
-                                            "order_details": "Cannot change ordered_qty when transitioning from DRAFT to ORDERED status."
-                                        }
-                                    )
-            return attrs
-
-        existing_ids = set(self.instance.order_details.values_list("id", flat=True))
-        removed_ids = existing_ids - incoming_ids
-        if removed_ids:
-            raise serializers.ValidationError(
-                {
-                    "order_details": f"Cannot remove details when status is {current_status}. Only DRAFT status allows removing details."
-                }
-            )
-
-        new_details = [d for d in order_details if not d.get("id")]
-        if new_details:
-            raise serializers.ValidationError(
-                {
-                    "order_details": f"Cannot add new details when status is {current_status}. Only DRAFT status allows adding new details."
-                }
-            )
-
-        price_fields = {
-            "unit_price_foreign",
-            "discounted_unit_price_foreign",
-            "unit_price_base",
-            "discounted_unit_price_base",
-            "total_price_foreign",
-            "discounted_total_price_foreign",
-            "total_price_base",
-            "discounted_total_price_base",
-        }
-        existing_details_map = {
-            str(detail.id): detail for detail in self.instance.order_details.all()
-        }
-        for detail_data in order_details:
-            detail_id = detail_data.get("id")
-            if detail_id:
-                existing_detail = existing_details_map.get(detail_id)
-                if existing_detail:
-                    for field in price_fields:
-                        if detail_data.get(field) is not None:
-                            existing_value = getattr(existing_detail, field, None)
-                            if existing_value is not None and existing_value != detail_data.get(
-                                field
-                            ):
-                                raise serializers.ValidationError(
-                                    {
-                                        "order_details": f"Cannot change {field} when status is {current_status}. Price fields can only be changed in DRAFT status."
-                                    }
-                                )
+        if order_details and current_status not in [PurchaseOrder.POStatus.DRAFT]:
+            incoming_ids = {str(d.get("id")) for d in order_details if d.get("id")}
+            if incoming_ids:
+                new_details = [d for d in order_details if not d.get("id")]
+                if new_details:
+                    raise serializers.ValidationError(
+                        {
+                            "order_details": f"Cannot add new details when status is {current_status}. Only DRAFT status allows adding new details."
+                        }
+                    )
 
         return attrs
 
     @staticmethod
-    def _compress_file(value):
+    def _compress_file(value: Any) -> Any:
         if value:
             return compress_pdf_file(value)
         return value
 
-    def validate_purchase_order_invoice_file(self, value):
+    def validate_purchase_order_invoice_file(self, value: Any) -> Any:
         return self._compress_file(value)
 
-    def validate_delivery_order_file(self, value):
+    def validate_delivery_order_file(self, value: Any) -> Any:
         return self._compress_file(value)
 
-    def validate_delivery_order_invoice_file(self, value):
+    def validate_delivery_order_invoice_file(self, value: Any) -> Any:
         return self._compress_file(value)
 
     def _calculate_totals_from_details(
-        self, order_details: list, existing_details_map: dict = None
+        self, order_details: list, existing_details_map: dict | None = None
     ) -> dict:
         """Calculate totals from order details."""
         total_ordered_qty = 0
@@ -644,7 +591,7 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
             "total_item_amount": total_item_amount,
         }
 
-    def _calculate_po_totals(self, attrs: dict, existing_totals: dict = None) -> dict:
+    def _calculate_po_totals(self, attrs: dict, existing_totals: dict | None = None) -> dict:
         """Calculate PO totals based on order details and fee fields."""
         exchange_rate = Decimal(str(attrs.get("exchange_rate") or 0))
         commission_fee_pct = Decimal(str(attrs.get("commission_fee_pct") or 0))
@@ -674,8 +621,8 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
             "total_amount": total_amount,
         }
 
-    def to_internal_value(self, data: dict) -> dict:
-        ret = super().to_internal_value(data)
+    def to_internal_value(self, data: dict) -> dict[str, Any]:
+        ret: dict[str, Any] = super().to_internal_value(data)
         ret["_purchase_order"] = self.instance
         return ret
 

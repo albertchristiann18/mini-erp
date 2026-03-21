@@ -199,10 +199,10 @@ class ProductCogs(DefaultModel):
     )
 
     purchase_date = models.DateField(help_text="Date from PurchaseOrder.invoice_date")
-    price_rmb = models.BigIntegerField(help_text="Unit price in RMB (unit_price_foreign)")
-    exchange_rate = models.DecimalField(
-        max_digits=15, decimal_places=4, help_text="Exchange rate from PO"
+    price_rmb = models.DecimalField(
+        max_digits=15, decimal_places=4, help_text="Unit price in RMB (unit_price_foreign)"
     )
+    exchange_rate = models.BigIntegerField(help_text="Exchange rate from PO (rounded integer)")
     cogs_amount = models.BigIntegerField(help_text="Unit price in IDR = price_rmb * exchange_rate")
 
     original_qty = models.IntegerField(

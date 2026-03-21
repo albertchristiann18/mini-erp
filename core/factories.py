@@ -1,7 +1,6 @@
 import factory
 
-from apps.inventory.models import Category, Product, ProductCogs, ProductVariant, Warehouse
-from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
+from apps.inventory.models import Category, Warehouse
 from core.models import Company, Marketplace
 
 
@@ -29,29 +28,6 @@ class WarehouseFactory(factory.django.DjangoModelFactory):
     company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
 
 
-class ProductFactory(factory.django.DjangoModelFactory):
-    """Factory for creating test Product instances"""
-
-    class Meta:
-        model = Product
-
-    name = "Test Product"
-    category = factory.SubFactory("core.factories.CategoryFactory")  # type: ignore[no-untyped-call]
-    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
-
-
-class ProductVariantFactory(factory.django.DjangoModelFactory):
-    """Factory for creating test ProductVariant instances"""
-
-    class Meta:
-        model = ProductVariant
-
-    name = "Test Product Variant"
-    product = factory.SubFactory(ProductFactory)  # type: ignore[no-untyped-call]
-    company = factory.LazyAttribute(lambda o: o.product.company if o.product else None)  # type: ignore[attr-defined]
-    variant_values = {}
-
-
 class CategoryFactory(factory.django.DjangoModelFactory):
     """Factory for creating test Category instances"""
 
@@ -61,50 +37,3 @@ class CategoryFactory(factory.django.DjangoModelFactory):
     name = "Test Category"
     category_code = "TEST"
     company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
-
-
-class PurchaseOrderFactory(factory.django.DjangoModelFactory):
-    """Factory for creating test PurchaseOrder instances"""
-
-    class Meta:
-        model = PurchaseOrder
-
-    purchase_order_number = factory.Sequence(lambda n: f"PO-{n:04d}")  # type: ignore[no-untyped-call]
-    warehouse = factory.SubFactory(WarehouseFactory)  # type: ignore[no-untyped-call]
-    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
-    supplier_name = "Test Supplier"
-    status = "DRAFT"
-    total_ordered_qty = 100
-    total_amount = 1000000
-
-
-class PurchaseOrderDetailFactory(factory.django.DjangoModelFactory):
-    """Factory for creating test PurchaseOrderDetail instances"""
-
-    class Meta:
-        model = PurchaseOrderDetail
-
-    purchase_order = factory.SubFactory(PurchaseOrderFactory)  # type: ignore[no-untyped-call]
-    product_variant = factory.SubFactory(ProductVariantFactory)  # type: ignore[no-untyped-call]
-    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
-    ordered_qty = 50
-    unit_price_base = 10000
-    total_price_base = 500000
-
-
-class ProductCogsFactory(factory.django.DjangoModelFactory):
-    """Factory for creating test ProductCogs instances"""
-
-    class Meta:
-        model = ProductCogs
-
-    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
-    product_variant = factory.SubFactory(ProductVariantFactory)  # type: ignore[no-untyped-call]
-    warehouse = factory.SubFactory(WarehouseFactory)  # type: ignore[no-untyped-call]
-    reference_number = "PO-TEST-001"
-    purchase_date = "2026-03-01"
-    price_rmb = 1000
-    exchange_rate = 2200
-    cogs_amount = factory.LazyAttribute(lambda o: int(o.price_rmb * o.exchange_rate))
-    original_qty = 50
-    remaining_qty = 50

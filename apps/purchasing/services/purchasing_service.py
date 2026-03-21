@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django_ulid.models import ULIDField
 
-from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement, Warehouse
+from apps.inventory.models import ProductCogs, ProductVariantWarehouse, Warehouse
 from apps.inventory.services.inventory_service import InventoryService
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company
@@ -67,7 +67,114 @@ class PurchaseOrderService:
         File compression is handled in the serializer's validate_<field> methods.
         """
         old_status = po.status
-        new_status = data.get("status")
+        new_status: str | None = data.get("status")
+
+        order_details = data.get("order_details", [])
+
+        existing_details_map = {str(d.id): d for d in po.order_details.all()}
+
+        if old_status not in [PurchaseOrder.POStatus.DRAFT, PurchaseOrder.POStatus.ORDERED]:
+            price_fields = {
+                "unit_price_foreign",
+                "discounted_unit_price_foreign",
+                "unit_price_base",
+                "discounted_unit_price_base",
+                "total_price_foreign",
+                "discounted_total_price_foreign",
+                "total_price_base",
+                "discounted_total_price_base",
+            }
+            for detail_data in order_details:
+                detail_id = detail_data.get("id")
+                if detail_id:
+                    existing_detail = existing_details_map.get(detail_id)
+                    if existing_detail:
+                        for field in price_fields:
+                            if detail_data.get(field) is not None:
+                                existing_value = getattr(existing_detail, field, None)
+                                if existing_value is not None and existing_value != detail_data.get(
+                                    field
+                                ):
+                                    raise ValidationError(
+                                        {
+                                            "order_details": f"Cannot change {field} when status is {old_status}. Price fields can only be changed in DRAFT or ORDERED status."
+                                        }
+                                    )
+
+        if new_status in [PurchaseOrder.POStatus.DELIVERED, PurchaseOrder.POStatus.COMPLETED]:
+            existing_details_map = {str(d.id): d for d in po.order_details.all()}
+
+            product_variant_ids = list(set(d.product_variant.id for d in po.order_details.all()))
+
+            pvw_map = {
+                str(pvw.product_variant.id): pvw
+                for pvw in ProductVariantWarehouse.objects.filter(
+                    warehouse=po.warehouse, product_variant_id__in=product_variant_ids
+                )
+            }
+
+            cogs_map = {
+                str(cogs.product_variant.id): cogs
+                for cogs in ProductCogs.objects.filter(
+                    warehouse=po.warehouse,
+                    reference_number=po.purchase_order_number,
+                    product_variant_id__in=product_variant_ids,
+                )
+            }
+
+            for detail_data in order_details:
+                detail_id = detail_data.get("id")
+                if not detail_id:
+                    continue
+                existing_detail = existing_details_map.get(detail_id)
+                if not existing_detail:
+                    continue
+
+                ordered_qty = detail_data.get("ordered_qty", existing_detail.ordered_qty)
+                received_qty = detail_data.get("received_qty", existing_detail.received_qty or 0)
+                existing_received_qty = existing_detail.received_qty or 0
+
+                if received_qty < existing_received_qty:
+                    qty_decrease = existing_received_qty - received_qty
+                    pvw = pvw_map.get(str(existing_detail.product_variant.id))
+                    if pvw:
+                        if pvw.physical_qty < qty_decrease:
+                            raise ValidationError(
+                                {
+                                    "order_details": f"Cannot decrease received_qty for {existing_detail.product_variant.name}. "
+                                    f"Physical qty ({pvw.physical_qty}) is less than the decrease amount ({qty_decrease}). "
+                                    f"There may be sales on this item."
+                                }
+                            )
+
+                    cogs = cogs_map.get(str(existing_detail.product_variant.id))
+                    if cogs:
+                        if cogs.remaining_qty < qty_decrease:
+                            raise ValidationError(
+                                {
+                                    "order_details": f"Cannot decrease received_qty for {existing_detail.product_variant.name}. "
+                                    f"COGS remaining_qty ({cogs.remaining_qty}) is less than the decrease amount ({qty_decrease}). "
+                                    f"There may be sales on this item."
+                                }
+                            )
+
+                if received_qty > ordered_qty:
+                    remarks = detail_data.get("remarks") or existing_detail.remarks
+                    if not remarks:
+                        raise ValidationError(
+                            {
+                                "order_details": f"Remarks is required for {existing_detail.product_variant.name} when received_qty ({received_qty}) exceeds ordered_qty ({ordered_qty})."
+                            }
+                        )
+
+                if new_status == PurchaseOrder.POStatus.COMPLETED and received_qty < ordered_qty:
+                    remarks = detail_data.get("remarks") or existing_detail.remarks
+                    if not remarks:
+                        raise ValidationError(
+                            {
+                                "order_details": f"Remarks is required for {existing_detail.product_variant.name} when moving to COMPLETED status with partial delivery (received_qty: {received_qty}, ordered_qty: {ordered_qty})."
+                            }
+                        )
 
         if new_status == PurchaseOrder.POStatus.DELIVERED and not data.get("delivery_date"):
             data["delivery_date"] = timezone.now()
@@ -84,7 +191,7 @@ class PurchaseOrderService:
                 )
 
         elif new_status == PurchaseOrder.POStatus.DELIVERED:
-            for item in data.get("order_details", []):
+            for item in order_details:
                 receive_date_str = item.get("received_date")
                 received_qty = item.get("received_qty", 0)
                 ordered_qty = item.get("ordered_qty", 0)
@@ -92,10 +199,16 @@ class PurchaseOrderService:
                 product_variant_id = item.get("product_variant_id")
                 if not product_variant_id:
                     continue
-                if not receive_date_str or not received_qty:
+                if not receive_date_str:
                     continue
+
+                qty_is_zero = received_qty == 0
+
                 receive_date = datetime.fromisoformat(receive_date_str.replace("Z", "+00:00"))
                 if receive_date and po.delivery_date and receive_date.date() < po.delivery_date:
+                    continue
+
+                if qty_is_zero:
                     continue
 
                 inventory_data.append(
@@ -113,6 +226,7 @@ class PurchaseOrderService:
                 )
 
         if inventory_data:
+            assert new_status is not None
             inventory_service = InventoryService()
             inventory_service.update_inventory_on_po(
                 po=po,
@@ -130,18 +244,18 @@ class PurchaseOrderService:
         po.save(update_fields=updated_fields)
 
         if details_data is not None:
-            self._update_order_details(po, details_data, old_status)
+            self._update_order_details(po, details_data, old_status, new_status or old_status)
 
         self._recalculate_po_totals(po)
 
         return po
 
     def _update_order_details(
-        self, po: PurchaseOrder, details_data: list, current_status: str
+        self, po: PurchaseOrder, details_data: list, current_status: str, new_status: str
     ) -> None:
         """Handle order details update/create/delete."""
         ulid_field = ULIDField()
-        existing_details = {}
+
         new_details: list[PurchaseOrderDetail] = []
         update_details: list[PurchaseOrderDetail] = []
         update_fields_set: set = set()
@@ -169,7 +283,7 @@ class PurchaseOrderService:
                     else:
                         raise ValidationError(f"Detail with id {detail_id} not found")
                 else:
-                    is_delivered = current_status == PurchaseOrder.POStatus.DELIVERED
+                    is_delivered = new_status == PurchaseOrder.POStatus.DELIVERED
                     for attr, value in detail_data.items():
                         if attr == "id":
                             continue

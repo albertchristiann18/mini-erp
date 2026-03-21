@@ -11,7 +11,7 @@ from apps.inventory.models import (
     ProductVariantWarehouse,
     StockMovement,
 )
-from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
+from apps.purchasing.models import PurchaseOrder
 
 
 class InventoryService:
@@ -115,7 +115,7 @@ class InventoryService:
                 raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
 
             qty = item.get("qty", 0)
-            field_change = item.get("field_change")
+            field_change = item.get("field_change") or ""
             balance_before = item.get("qty_before", 0)
             balance_after = balance_before + qty
 
@@ -126,10 +126,10 @@ class InventoryService:
                     warehouse_id=warehouse_id,
                     quantity=qty,
                     field_change=field_change,
-                    movement_type=movement_type,
+                    movement_type=movement_type or "",
                     balance_before=balance_before,
                     balance_after=balance_after,
-                    reference_number=reference_number,
+                    reference_number=reference_number or "",
                     note=item.get("note"),
                 )
             )
@@ -139,7 +139,7 @@ class InventoryService:
     @transaction.atomic
     def update_inventory_on_po(
         self,
-        po: object,
+        po: PurchaseOrder,
         new_status: str,
         data: list[dict],
     ) -> None:
@@ -150,9 +150,9 @@ class InventoryService:
         - ProductVariant.total_incoming_qty += ordered_qty
 
         For INBOUND (DELIVERED) - first time (already_processed == 0):
-        - ProductVariantWarehouse.incoming_qty -= ordered_qty
+        - ProductVariantWarehouse.incoming_qty -= remaining_qty (ordered_qty - received_qty)
         - ProductVariantWarehouse.physical_qty += received_qty
-        - ProductVariant.total_incoming_qty -= ordered_qty
+        - ProductVariant.total_incoming_qty -= remaining_qty
         - ProductVariant.total_available_qty += received_qty
         - Create COGS record
 
@@ -184,11 +184,11 @@ class InventoryService:
             str(pvw.product_variant.id): pvw for pvw in product_variant_warehouses
         }
 
-        reference_number = getattr(po, "purchase_order_number", None)
+        reference_number: str | None = getattr(po, "purchase_order_number", None)
         existing_cogs_map: dict = {}
         if new_status == PurchaseOrder.POStatus.DELIVERED and reference_number:
             existing_cogs_map = {
-                str(cogs.product_variant_id): cogs
+                str(cogs.product_variant.id): cogs
                 for cogs in ProductCogs.objects.select_for_update().filter(
                     product_variant_id__in=product_variant_ids,
                     warehouse=po.warehouse,
@@ -212,11 +212,11 @@ class InventoryService:
             already_processed = item.get("updated_qty", 0) or 0
             qty_diff = received_qty - already_processed
 
-            pv = map_product_variant.get(product_variant_id)
+            pv = map_product_variant.get(str(product_variant_id))
             if not pv:
                 pv = ProductVariant.objects.get(id=product_variant_id)
 
-            pvw = map_product_warehouse.get(product_variant_id)
+            pvw = map_product_warehouse.get(str(product_variant_id))
             created_pvw = False
             if not pvw:
                 pvw = ProductVariantWarehouse(
@@ -250,12 +250,13 @@ class InventoryService:
 
             elif new_status == PurchaseOrder.POStatus.DELIVERED:
                 if already_processed == 0:
-                    pvw.incoming_qty -= ordered_qty
+                    remaining_qty = max(0, ordered_qty - received_qty)
+                    pvw.incoming_qty = remaining_qty
                     pvw.physical_qty += received_qty
                     if not created_pvw:
                         update_fields_pvw.update(["incoming_qty", "physical_qty"])
 
-                    pv.total_incoming_qty -= ordered_qty
+                    pv.total_incoming_qty = remaining_qty
                     pv.total_available_qty += received_qty
                     update_fields_pv.update(["total_incoming_qty", "total_available_qty"])
 
@@ -294,6 +295,7 @@ class InventoryService:
                             price_rmb = 0
                             cogs_amount = item.get("unit_price_base") or 0
 
+                        assert reference_number is not None
                         create_cogs_records.append(
                             ProductCogs(
                                 company=po.company,
