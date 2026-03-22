@@ -77,11 +77,11 @@ class PurchaseOrder(DefaultModel):
     def __str__(self) -> str:
         return self.purchase_order_number
 
-    def get_shipping_per_qty(self) -> Decimal:
+    def get_shipping_per_qty(self) -> int:
         if not self.shipping_fee:
-            return Decimal("0.0")
+            return 0
 
-        return round_decimal(self.shipping_fee / self.total_ordered_qty)
+        return int(round(self.shipping_fee / self.total_ordered_qty))
 
     def cost_ratio_cogs(self) -> Decimal:
         if self.procure_amount and self.total_item_amount and self.shipping_fee:

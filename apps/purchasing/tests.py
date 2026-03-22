@@ -296,7 +296,7 @@ class PurchaseOrderServiceTest(TestCase):
             commission_fee_pct=0,
             delivery_fee=0,
             cbm=0,
-            shipping_fee_per_cbm=0,
+            shipping_fee=0,
             exchange_rate=2200,
         )
         PurchaseOrderDetailFactory(
@@ -409,7 +409,7 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         self.assertIn("invoice_date", serializer.errors)
 
     def test_draft_to_ordered_requires_order_details(self):
-        """Test that transitioning DRAFT to ORDERED requires at least one order detail"""
+        """Test that transitioning DRAFT to ORDERED requires order_details when none exist"""
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
@@ -418,13 +418,19 @@ class PurchaseOrderSerializerValidationTest(TestCase):
             purchase_order_invoice_file="test.pdf",
             invoice_number="INV-001",
             invoice_date=date.today(),
+            commission_fee_pct=Decimal("10"),
             forwarder_name="Test Forwarder",
             supplier_name="Test Supplier",
-            shop_services="Test Shop",
-            commission_fee_pct=Decimal("10"),
+            shop_services="Test Shop Service",
+            delivery_fee=Decimal("0"),
         )
 
-        serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.ORDERED})
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.ORDERED,
+            },
+        )
 
         self.assertFalse(serializer.is_valid())
         self.assertIn("order_details", serializer.errors)
@@ -530,6 +536,69 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("shop_services", serializer.errors)
 
+    def test_draft_to_ordered_requires_delivery_fee(self):
+        """Test that transitioning DRAFT to ORDERED requires delivery_fee (can be 0)"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DRAFT,
+            exchange_rate=2200,
+            purchase_order_invoice_file="test.pdf",
+            invoice_number="INV-001",
+            invoice_date=date.today(),
+            commission_fee_pct=Decimal("10"),
+            forwarder_name="Test Forwarder",
+            supplier_name="Test Supplier",
+            shop_services="Test Shop Service",
+        )
+        PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+        )
+
+        serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.ORDERED})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("delivery_fee", serializer.errors)
+
+    def test_draft_to_ordered_allows_zero_delivery_fee(self):
+        """Test that transitioning DRAFT to ORDERED allows delivery_fee=0"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DRAFT,
+            exchange_rate=2200,
+            purchase_order_invoice_file="test.pdf",
+            invoice_number="INV-001",
+            invoice_date=date.today(),
+            commission_fee_pct=Decimal("10"),
+            forwarder_name="Test Forwarder",
+            supplier_name="Test Supplier",
+            shop_services="Test Shop Service",
+            delivery_fee=Decimal("0"),
+        )
+        PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+        )
+
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.ORDERED,
+                "order_details": [
+                    {
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 100,
+                    }
+                ],
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
     def test_ordered_to_shipped_requires_delivery_order_number(self):
         """Test that transitioning ORDERED to SHIPPED requires delivery order number"""
         po = PurchaseOrderFactory(
@@ -557,20 +626,55 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("delivery_order_file", serializer.errors)
 
-    def test_ordered_to_shipped_requires_shipping_fee_per_cbm(self):
-        """Test that transitioning ORDERED to SHIPPED requires shipping_fee_per_cbm"""
+    def test_ordered_to_shipped_requires_shipping_fee(self):
+        """Test that transitioning ORDERED to SHIPPED requires shipping_fee"""
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
             status=PurchaseOrder.POStatus.ORDERED,
             delivery_order_number="DO-001",
             delivery_order_file="existing_file.pdf",
+            cbm=Decimal("1.5"),
+            weight=Decimal("10.0"),
         )
 
         serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.SHIPPED})
 
         self.assertFalse(serializer.is_valid())
-        self.assertIn("shipping_fee_per_cbm", serializer.errors)
+        self.assertIn("shipping_fee", serializer.errors)
+
+    def test_ordered_to_shipped_requires_cbm(self):
+        """Test that transitioning ORDERED to SHIPPED requires cbm"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+            delivery_order_number="DO-001",
+            delivery_order_file="existing_file.pdf",
+            shipping_fee=1000,
+        )
+
+        serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("cbm", serializer.errors)
+
+    def test_ordered_to_shipped_requires_weight(self):
+        """Test that transitioning ORDERED to SHIPPED requires weight"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+            delivery_order_number="DO-001",
+            delivery_order_file="existing_file.pdf",
+            shipping_fee=1000,
+            cbm=Decimal("1.5"),
+        )
+
+        serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("weight", serializer.errors)
 
     def test_shipped_to_delivered_requires_delivery_order_invoice(self):
         """Test that transitioning SHIPPED to DELIVERED requires DO invoice"""
