@@ -2,7 +2,7 @@ import io
 import os
 import tempfile
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 import fitz
 from django.core.exceptions import ValidationError
