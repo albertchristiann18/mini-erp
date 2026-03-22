@@ -180,6 +180,8 @@ class ProductCogs(DefaultModel):
     - price_rmb: Unit price in RMB from PO detail (unit_price_foreign)
     - exchange_rate: Exchange rate from PO (PurchaseOrder.exchange_rate)
     - cogs_amount: Unit price in IDR = price_rmb * exchange_rate
+    - allocated_shipping_fee: Shipping fee allocated per unit based on volume (RMB -> IDR)
+    - allocated_delivery_fee: Delivery fee allocated per unit (RMB -> IDR)
     - original_qty: Total quantity that came in from the PO (accumulates with each delivery update).
     - remaining_qty: Current available quantity for sales/consumption.
                     This ONLY decreases when there are actual outbound/sales transactions.
@@ -204,6 +206,12 @@ class ProductCogs(DefaultModel):
     )
     exchange_rate = models.BigIntegerField(help_text="Exchange rate from PO (rounded integer)")
     cogs_amount = models.BigIntegerField(help_text="Unit price in IDR = price_rmb * exchange_rate")
+    allocated_shipping_fee = models.BigIntegerField(
+        default=0, help_text="Shipping fee allocated per unit (IDR)"
+    )
+    allocated_delivery_fee = models.BigIntegerField(
+        default=0, help_text="Delivery fee allocated per unit (IDR)"
+    )
 
     original_qty = models.IntegerField(
         default=0,

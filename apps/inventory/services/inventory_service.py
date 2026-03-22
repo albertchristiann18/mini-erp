@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Optional
 
 from django.core.exceptions import ValidationError
@@ -196,6 +197,39 @@ class InventoryService:
                 )
             }
 
+        shipping_fee = getattr(po, "shipping_fee", 0) or 0
+        delivery_fee = Decimal(str(getattr(po, "delivery_fee", 0) or 0))
+        exchange_rate = Decimal(str(getattr(po, "exchange_rate", 1) or 1))
+        total_cbm = Decimal(str(getattr(po, "cbm", 0) or 0))
+
+        item_volumes: dict = {}
+        total_volume = Decimal("0")
+        for item in data:
+            pv = map_product_variant.get(str(item.get("product_variant_id")))
+            if pv and pv.product:
+                length = Decimal(str(pv.product.length or 0))
+                width = Decimal(str(pv.product.width or 0))
+                height = Decimal(str(pv.product.height or 0))
+                ordered_qty = Decimal(str(item.get("ordered_qty", 0) or 0))
+                item_volume = length * width * height / Decimal("1000000")
+                item_volumes[str(item.get("product_variant_id"))] = {
+                    "volume": item_volume,
+                    "qty": ordered_qty,
+                    "total_volume": item_volume * ordered_qty,
+                }
+                total_volume += item_volume * ordered_qty
+
+        if total_volume > 0 and total_cbm > 0:
+            total_delivery_fee_idr = delivery_fee * exchange_rate
+            for item_id, item_data in item_volumes.items():
+                volume_ratio = item_data["total_volume"] / total_volume
+                item_data["shipping_share"] = int(round(shipping_fee * volume_ratio))
+                item_data["delivery_share"] = int(round(total_delivery_fee_idr * volume_ratio))
+        else:
+            for item_id in item_volumes:
+                item_volumes[item_id]["shipping_share"] = 0
+                item_volumes[item_id]["delivery_share"] = 0
+
         new_pvws: list[ProductVariantWarehouse] = []
         update_pvws: list[ProductVariantWarehouse] = []
         update_pv: list[ProductVariant] = []
@@ -285,15 +319,37 @@ class InventoryService:
                             or item.get("unit_price_foreign")
                             or 0
                         )
-                        exchange_rate = item.get("exchange_rate") or 1
+                        item_exchange_rate = item.get("exchange_rate") or int(exchange_rate)
                         invoice_date = getattr(po, "invoice_date", None) or timezone.now().date()
 
-                        if unit_price_foreign and exchange_rate and exchange_rate != 1:
+                        allocated_shipping = 0
+                        allocated_delivery = 0
+                        if str(product_variant_id) in item_volumes:
+                            vol_data = item_volumes[str(product_variant_id)]
+                            allocated_shipping = vol_data.get("shipping_share", 0)
+                            allocated_delivery = vol_data.get("delivery_share", 0)
+
+                        unit_price_idr = Decimal("0")
+                        if unit_price_foreign and item_exchange_rate and item_exchange_rate != 1:
                             price_rmb = unit_price_foreign
-                            cogs_amount = int(float(unit_price_foreign) * float(exchange_rate))
+                            unit_price_idr = Decimal(str(unit_price_foreign)) * Decimal(
+                                str(item_exchange_rate)
+                            )
                         else:
-                            price_rmb = 0
-                            cogs_amount = item.get("unit_price_base") or 0
+                            price_rmb = Decimal("0")
+                            unit_price_idr = Decimal(str(item.get("unit_price_base") or 0))
+
+                        shipping_per_unit = (
+                            Decimal(str(allocated_shipping)) / Decimal(str(received_qty))
+                            if received_qty > 0
+                            else Decimal("0")
+                        )
+                        delivery_per_unit = (
+                            Decimal(str(allocated_delivery)) / Decimal(str(received_qty))
+                            if received_qty > 0
+                            else Decimal("0")
+                        )
+                        cogs_amount = int(unit_price_idr + shipping_per_unit + delivery_per_unit)
 
                         assert reference_number is not None
                         create_cogs_records.append(
@@ -304,8 +360,10 @@ class InventoryService:
                                 reference_number=reference_number,
                                 purchase_date=invoice_date,
                                 price_rmb=price_rmb,
-                                exchange_rate=exchange_rate,
+                                exchange_rate=item_exchange_rate,
                                 cogs_amount=cogs_amount,
+                                allocated_shipping_fee=allocated_shipping,
+                                allocated_delivery_fee=allocated_delivery,
                                 original_qty=received_qty,
                                 remaining_qty=received_qty,
                             )
@@ -340,10 +398,23 @@ class InventoryService:
                         if existing_cogs:
                             existing_cogs.original_qty = received_qty
                             existing_cogs.remaining_qty += qty_diff
+                            unit_price_idr = Decimal(str(existing_cogs.price_rmb)) * Decimal(
+                                str(existing_cogs.exchange_rate)
+                            )
+                            shipping_per_unit = (
+                                Decimal(str(existing_cogs.allocated_shipping_fee))
+                                / Decimal(str(received_qty))
+                                if received_qty > 0
+                                else Decimal("0")
+                            )
+                            delivery_per_unit = (
+                                Decimal(str(existing_cogs.allocated_delivery_fee))
+                                / Decimal(str(received_qty))
+                                if received_qty > 0
+                                else Decimal("0")
+                            )
                             existing_cogs.cogs_amount = int(
-                                float(received_qty)
-                                * float(existing_cogs.price_rmb)
-                                * float(existing_cogs.exchange_rate)
+                                unit_price_idr + shipping_per_unit + delivery_per_unit
                             )
                             update_cogs_records.append(existing_cogs)
 

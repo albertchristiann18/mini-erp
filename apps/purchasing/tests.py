@@ -296,7 +296,7 @@ class PurchaseOrderServiceTest(TestCase):
             commission_fee_pct=0,
             delivery_fee=0,
             cbm=0,
-            shipping_fee=0,
+            shipping_fee_per_cbm=0,
             exchange_rate=2200,
         )
         PurchaseOrderDetailFactory(
@@ -641,7 +641,7 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.SHIPPED})
 
         self.assertFalse(serializer.is_valid())
-        self.assertIn("shipping_fee", serializer.errors)
+        self.assertIn("shipping_fee_per_cbm", serializer.errors)
 
     def test_ordered_to_shipped_requires_cbm(self):
         """Test that transitioning ORDERED to SHIPPED requires cbm"""
@@ -651,7 +651,7 @@ class PurchaseOrderSerializerValidationTest(TestCase):
             status=PurchaseOrder.POStatus.ORDERED,
             delivery_order_number="DO-001",
             delivery_order_file="existing_file.pdf",
-            shipping_fee=1000,
+            shipping_fee_per_cbm=1000,
         )
 
         serializer = self._create_serializer(po, {"status": PurchaseOrder.POStatus.SHIPPED})
@@ -667,7 +667,7 @@ class PurchaseOrderSerializerValidationTest(TestCase):
             status=PurchaseOrder.POStatus.ORDERED,
             delivery_order_number="DO-001",
             delivery_order_file="existing_file.pdf",
-            shipping_fee=1000,
+            shipping_fee_per_cbm=1000,
             cbm=Decimal("1.5"),
         )
 
@@ -1013,7 +1013,7 @@ class PurchaseOrderCOGSTest(TestCase):
         self.assertIsNotNone(cogs)
         self.assertEqual(cogs.original_qty, 80)
         self.assertEqual(cogs.remaining_qty, 80)
-        self.assertEqual(cogs.cogs_amount, 1760000)
+        self.assertEqual(cogs.cogs_amount, 22000)
 
     def test_cogs_updated_when_received_qty_decreases(self):
         """Test COGS is updated when received_qty decreases (e.g., user corrected wrong input)."""
@@ -1074,7 +1074,7 @@ class PurchaseOrderCOGSTest(TestCase):
         self.assertIsNotNone(cogs)
         self.assertEqual(cogs.original_qty, 30)
         self.assertEqual(cogs.remaining_qty, 30)
-        self.assertEqual(cogs.cogs_amount, 660000)
+        self.assertEqual(cogs.cogs_amount, 22000)
 
     def test_no_cogs_created_when_received_qty_zero(self):
         """Test no COGS is created when received_qty is 0."""
@@ -1119,6 +1119,282 @@ class PurchaseOrderCOGSTest(TestCase):
         self.assertEqual(
             cogs_count, initial_cogs_count, "No COGS should be created when received_qty is 0"
         )
+
+    def test_cogs_with_allocated_shipping_and_delivery_fees_single_item(self):
+        """Test COGS includes allocated shipping and delivery fees per unit for single item."""
+        product = self.product_variant.product
+        product.length = 10
+        product.width = 10
+        product.height = 10
+        product.save()
+
+        shipping_fee_per_cbm = 100000
+        cbm = Decimal("0.01")
+        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 1000
+
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+            exchange_rate=2200,
+            shipping_fee_per_cbm=shipping_fee_per_cbm,
+            cbm=cbm,
+            shipping_fee=shipping_fee,
+            delivery_fee=Decimal("100.5"),  # 100.5 RMB
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=10,
+            unit_price_foreign=Decimal("10"),
+        )
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 10,
+                            "received_qty": 10,
+                            "unit_price_foreign": Decimal("10"),
+                            "received_date": str(date.today()),
+                        }
+                    ],
+                },
+            )
+
+        cogs = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).first()
+
+        self.assertIsNotNone(cogs)
+        self.assertEqual(cogs.original_qty, 10)
+        self.assertEqual(cogs.remaining_qty, 10)
+
+        unit_price_idr = 10 * 2200  # 22000
+        allocated_shipping = 1000  # shipping_fee (IDR) = 1000
+        allocated_delivery = int(100.5 * 2200)  # 221100
+        total_allocated = allocated_shipping + allocated_delivery  # 222100
+        shipping_per_unit = total_allocated / 10  # 22210
+        expected_cogs = unit_price_idr + shipping_per_unit  # 22000 + 22210 = 44210
+
+        self.assertEqual(cogs.cogs_amount, expected_cogs)
+        self.assertEqual(cogs.allocated_shipping_fee, allocated_shipping)
+        self.assertEqual(cogs.allocated_delivery_fee, allocated_delivery)
+
+    def test_cogs_with_allocated_fees_multiple_items_same_volume(self):
+        """Test COGS with multiple items sharing shipping fees equally when same LxWxH."""
+        product1 = self.product_variant.product
+        product1.length = 10
+        product1.width = 10
+        product1.height = 10
+        product1.save()
+
+        product2 = ProductFactory(
+            category=self.category, company=self.company, length=10, width=10, height=10
+        )
+        product_variant2 = ProductVariantFactory(product=product2)
+        ProductVariantWarehouseFactory(
+            product_variant=product_variant2, warehouse=self.warehouse, company=self.company
+        )
+
+        shipping_fee_per_cbm = 100000
+        cbm = Decimal("0.01")
+        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 1000
+
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+            exchange_rate=2200,
+            shipping_fee_per_cbm=shipping_fee_per_cbm,
+            cbm=cbm,
+            shipping_fee=shipping_fee,
+            delivery_fee=Decimal("0"),
+        )
+
+        detail1 = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=10,
+            unit_price_foreign=Decimal("10"),
+        )
+        detail2 = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=product_variant2,
+            ordered_qty=10,
+            unit_price_foreign=Decimal("20"),
+        )
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "order_details": [
+                        {
+                            "id": str(detail1.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 10,
+                            "received_qty": 10,
+                            "unit_price_foreign": Decimal("10"),
+                            "received_date": str(date.today()),
+                        },
+                        {
+                            "id": str(detail2.id),
+                            "product_variant_id": str(product_variant2.id),
+                            "ordered_qty": 10,
+                            "received_qty": 10,
+                            "unit_price_foreign": Decimal("20"),
+                            "received_date": str(date.today()),
+                        },
+                    ],
+                },
+            )
+
+        cogs1 = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).first()
+        cogs2 = ProductCogs.objects.filter(
+            product_variant=product_variant2,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).first()
+
+        self.assertIsNotNone(cogs1)
+        self.assertIsNotNone(cogs2)
+
+        shipping_fee = 1000  # IDR, already converted
+        volume1 = (
+            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
+        )  # 0.00001
+        volume2 = (
+            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
+        )  # 0.00001
+        total_volume = volume1 + volume2  # 0.00002
+
+        allocated_shipping1 = int(shipping_fee * volume1 / total_volume)  # 500
+        allocated_shipping2 = int(shipping_fee * volume2 / total_volume)  # 500
+
+        expected_cogs1 = 10 * 2200 + allocated_shipping1 / 10  # 22000 + 50 = 22050
+        expected_cogs2 = 20 * 2200 + allocated_shipping2 / 10  # 44000 + 50 = 44050
+
+        self.assertEqual(cogs1.cogs_amount, expected_cogs1)
+        self.assertEqual(cogs2.cogs_amount, expected_cogs2)
+        self.assertEqual(cogs1.allocated_shipping_fee, allocated_shipping1)
+        self.assertEqual(cogs2.allocated_shipping_fee, allocated_shipping2)
+
+    def test_cogs_with_allocated_fees_multiple_items_different_volume(self):
+        """Test COGS with multiple items where each takes portion of shipping based on volume."""
+        product1 = self.product_variant.product
+        product1.length = 10
+        product1.width = 10
+        product1.height = 10  # 0.000001 m3 per item, 0.00001 m3 total for qty=10
+        product1.save()
+
+        product2 = ProductFactory(
+            category=self.category, company=self.company, length=20, width=20, height=20
+        )  # 0.008 m3 per item, 0.08 m3 total for qty=10
+        product_variant2 = ProductVariantFactory(product=product2)
+        ProductVariantWarehouseFactory(
+            product_variant=product_variant2, warehouse=self.warehouse, company=self.company
+        )
+
+        shipping_fee_per_cbm = 100000
+        cbm = Decimal("0.09")
+        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 9000
+
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+            exchange_rate=2200,
+            shipping_fee_per_cbm=shipping_fee_per_cbm,
+            cbm=cbm,
+            shipping_fee=shipping_fee,
+            delivery_fee=Decimal("0"),
+        )
+
+        detail1 = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=10,
+            unit_price_foreign=Decimal("10"),
+        )
+        detail2 = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=product_variant2,
+            ordered_qty=10,
+            unit_price_foreign=Decimal("20"),
+        )
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "order_details": [
+                        {
+                            "id": str(detail1.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 10,
+                            "received_qty": 10,
+                            "unit_price_foreign": Decimal("10"),
+                            "received_date": str(date.today()),
+                        },
+                        {
+                            "id": str(detail2.id),
+                            "product_variant_id": str(product_variant2.id),
+                            "ordered_qty": 10,
+                            "received_qty": 10,
+                            "unit_price_foreign": Decimal("20"),
+                            "received_date": str(date.today()),
+                        },
+                    ],
+                },
+            )
+
+        cogs1 = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).first()
+        cogs2 = ProductCogs.objects.filter(
+            product_variant=product_variant2,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).first()
+
+        self.assertIsNotNone(cogs1)
+        self.assertIsNotNone(cogs2)
+
+        shipping_fee = 9000  # IDR, already converted
+        volume1 = (
+            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
+        )  # 0.00001
+        volume2 = (
+            Decimal("20") * Decimal("20") * Decimal("20") / Decimal("1000000") * Decimal("10")
+        )  # 0.08
+        total_volume = volume1 + volume2  # 0.08001
+
+        allocated_shipping1 = int(shipping_fee * volume1 / total_volume)  # 1
+        allocated_shipping2 = int(shipping_fee * volume2 / total_volume)  # 8999
+
+        expected_cogs1 = 10 * 2200 + allocated_shipping1 / 10  # 22000 + 0 = 22000
+        expected_cogs2 = 20 * 2200 + allocated_shipping2 / 10  # 44000 + 899 = 44899
+
+        self.assertEqual(cogs1.cogs_amount, expected_cogs1)
+        self.assertEqual(cogs2.cogs_amount, expected_cogs2)
+        self.assertEqual(cogs1.allocated_shipping_fee, allocated_shipping1)
+        self.assertEqual(cogs2.allocated_shipping_fee, allocated_shipping2)
 
     def test_completed_status_does_not_create_cogs(self):
         """Test transitioning to COMPLETED does not create new COGS."""

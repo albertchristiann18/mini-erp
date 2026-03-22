@@ -248,11 +248,11 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
         exchange_rate = Decimal(str(attrs.get("exchange_rate") or 0))
         commission_fee_pct = Decimal(str(attrs.get("commission_fee_pct") or 0))
         delivery_fee = Decimal(str(attrs.get("delivery_fee") or 0))
-        shipping_fee = Decimal(str(attrs.get("shipping_fee") or 0))
+        shipping_fee_per_cbm = Decimal(str(attrs.get("shipping_fee_per_cbm") or 0))
         cbm = Decimal(str(attrs.get("cbm") or 0))
 
         commission_fee = int(round(commission_fee_pct * delivery_fee * exchange_rate))
-        shipping_fee_per_cbm = int(round(shipping_fee * cbm)) if cbm else 0
+        shipping_fee = int(round(shipping_fee_per_cbm * cbm)) if cbm else 0
         procure_amount = shipping_fee + commission_fee
         total_order_amount = totals["total_item_amount"] + commission_fee
         total_amount = totals["total_item_amount"] + commission_fee + shipping_fee
@@ -262,11 +262,11 @@ class PurchaseOrderCreateSerializer(serializers.ModelSerializer):
             "total_received_qty": totals["total_received_qty"],
             "total_item_amount": totals["total_item_amount"],
             "commission_fee": commission_fee,
-            "shipping_fee": int(shipping_fee),
-            "shipping_fee_per_cbm": shipping_fee_per_cbm,
-            "procure_amount": int(procure_amount),
-            "total_order_amount": int(total_order_amount),
-            "total_amount": int(total_amount),
+            "shipping_fee": shipping_fee,
+            "shipping_fee_per_cbm": int(shipping_fee_per_cbm),
+            "procure_amount": procure_amount,
+            "total_order_amount": total_order_amount,
+            "total_amount": total_amount,
         }
 
     def create(self, validated_data: dict) -> PurchaseOrder:
@@ -483,11 +483,13 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
                         }
                     )
 
-                current_shipping_fee = self.instance.shipping_fee
-                new_shipping_fee = attrs.get("shipping_fee")
-                if not current_shipping_fee and new_shipping_fee is None:
+                current_shipping_fee_per_cbm = self.instance.shipping_fee_per_cbm
+                new_shipping_fee_per_cbm = attrs.get("shipping_fee_per_cbm")
+                if not current_shipping_fee_per_cbm and new_shipping_fee_per_cbm is None:
                     raise serializers.ValidationError(
-                        {"shipping_fee": "Shipping fee is required when moving to SHIPPED status."}
+                        {
+                            "shipping_fee_per_cbm": "Shipping fee per CBM is required when moving to SHIPPED status."
+                        }
                     )
 
                 current_cbm = self.instance.cbm
@@ -562,6 +564,26 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
                         }
                     )
 
+        if self.instance and new_status in [
+            PurchaseOrder.POStatus.ORDERED,
+            PurchaseOrder.POStatus.SHIPPED,
+            PurchaseOrder.POStatus.DELIVERED,
+        ]:
+            existing_totals = {
+                "total_ordered_qty": self.instance.total_ordered_qty or 0,
+                "total_received_qty": self.instance.total_received_qty or 0,
+                "total_item_amount": self.instance.total_item_amount or 0,
+            }
+            attrs.setdefault("exchange_rate", self.instance.exchange_rate)
+            attrs.setdefault("commission_fee_pct", self.instance.commission_fee_pct)
+            attrs.setdefault("delivery_fee", self.instance.delivery_fee)
+            attrs.setdefault("shipping_fee_per_cbm", self.instance.shipping_fee_per_cbm)
+            attrs.setdefault("cbm", self.instance.cbm)
+            attrs.setdefault("shipping_fee", self.instance.shipping_fee)
+
+            totals = self._calculate_po_totals(attrs, existing_totals)
+            attrs.update(totals)
+
         return attrs
 
     @staticmethod
@@ -620,11 +642,11 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
         exchange_rate = Decimal(str(attrs.get("exchange_rate") or 0))
         commission_fee_pct = Decimal(str(attrs.get("commission_fee_pct") or 0))
         delivery_fee = Decimal(str(attrs.get("delivery_fee") or 0))
-        shipping_fee = Decimal(str(attrs.get("shipping_fee") or 0))
+        shipping_fee_per_cbm = Decimal(str(attrs.get("shipping_fee_per_cbm") or 0))
         cbm = Decimal(str(attrs.get("cbm") or 0))
 
         commission_fee = int(round(commission_fee_pct * delivery_fee * exchange_rate))
-        shipping_fee_per_cbm = int(round(shipping_fee * cbm)) if cbm else 0
+        shipping_fee = int(round(shipping_fee_per_cbm * cbm)) if cbm else 0
         procure_amount = shipping_fee + commission_fee
         total_item_amount = existing_totals.get("total_item_amount", 0) if existing_totals else 0
         total_order_amount = total_item_amount + commission_fee
@@ -639,11 +661,11 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
             else 0,
             "total_item_amount": total_item_amount,
             "commission_fee": commission_fee,
-            "shipping_fee": int(shipping_fee),
-            "shipping_fee_per_cbm": shipping_fee_per_cbm,
-            "procure_amount": int(procure_amount),
-            "total_order_amount": int(total_order_amount),
-            "total_amount": int(total_amount),
+            "shipping_fee": shipping_fee,
+            "shipping_fee_per_cbm": int(shipping_fee_per_cbm),
+            "procure_amount": procure_amount,
+            "total_order_amount": total_order_amount,
+            "total_amount": total_amount,
         }
 
     def to_internal_value(self, data: dict) -> dict[str, Any]:
