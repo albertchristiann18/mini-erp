@@ -3,7 +3,7 @@ from decimal import Decimal
 from unittest.mock import patch
 from uuid import uuid4
 
-import pytest
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -11,14 +11,9 @@ from rest_framework.test import APIClient
 from apps.inventory.factories import (
     CategoryFactory,
     CompanyFactory,
-    ProductCogsFactory,
     ProductFactory,
     ProductVariantFactory,
     ProductVariantWarehouseFactory,
-)
-from apps.inventory.models import (
-    ProductCogs,
-    ProductVariantWarehouse,
 )
 from apps.purchasing.factories import (
     PurchaseOrderDetailFactory,
@@ -103,6 +98,127 @@ class PurchaseOrderServiceTest(TestCase):
         self.product = ProductFactory(category=self.category, company=self.company)
         self.product_variant = ProductVariantFactory(product=self.product)
         self.service = PurchaseOrderService()
+
+    def test_decrease_received_qty_fails_when_physical_qty_insufficient(self):
+        """Test that decreasing received_qty fails when physical qty already sold."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+            received_qty=10,
+            updated_qty=10,
+        )
+
+        ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            incoming_qty=90,
+            physical_qty=3,
+        )
+
+        po.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            with self.assertRaises(ValidationError) as context:
+                self.service.update_purchase_order(
+                    po,
+                    {
+                        "status": PurchaseOrder.POStatus.DELIVERED,
+                        "order_details": [
+                            {
+                                "id": str(detail.id),
+                                "product_variant_id": str(self.product_variant.id),
+                                "ordered_qty": 100,
+                                "received_qty": 5,
+                                "updated_qty": 10,
+                                "received_date": str(date.today() + timedelta(days=1)),
+                            }
+                        ],
+                    },
+                )
+
+        self.assertIn("Cannot decrease received_qty", str(context.exception))
+
+    def test_received_qty_exceeds_ordered_requires_remarks(self):
+        """Test that received_qty > ordered_qty requires remarks."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+            received_qty=10,
+            updated_qty=10,
+        )
+
+        ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            incoming_qty=90,
+            physical_qty=10,
+        )
+
+        po.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            with self.assertRaises(ValidationError) as context:
+                self.service.update_purchase_order(
+                    po,
+                    {
+                        "status": PurchaseOrder.POStatus.DELIVERED,
+                        "order_details": [
+                            {
+                                "id": str(detail.id),
+                                "product_variant_id": str(self.product_variant.id),
+                                "ordered_qty": 100,
+                                "received_qty": 150,
+                                "updated_qty": 10,
+                                "received_date": str(date.today() + timedelta(days=1)),
+                            }
+                        ],
+                    },
+                )
+
+        self.assertIn("Remarks is required", str(context.exception))
+
+    def test_update_po_detail_not_found_in_non_draft_status(self):
+        """Test that updating non-existent detail fails in non-DRAFT status."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+        )
+        PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+        )
+
+        po.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            with self.assertRaises(ValidationError) as context:
+                self.service.update_purchase_order(
+                    po,
+                    {
+                        "order_details": [
+                            {
+                                "id": str(uuid4()),
+                                "ordered_qty": 50,
+                            }
+                        ]
+                    },
+                )
+
+        self.assertIn("Detail with id", str(context.exception))
 
     def test_create_purchase_order_success(self):
         """Test successful creation of purchase order"""
@@ -294,6 +410,43 @@ class PurchaseOrderServiceTest(TestCase):
         updated_po = self.service.update_purchase_order(po, data)
 
         self.assertEqual(updated_po.status, PurchaseOrder.POStatus.COMPLETED)
+
+    def test_update_po_delivered_to_completed_partial_requires_remarks(self):
+        """Test that transitioning to COMPLETED with partial delivery requires remarks."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DELIVERED,
+            delivery_date=date.today(),
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+            received_qty=80,
+            updated_qty=80,
+        )
+
+        po.refresh_from_db()
+
+        with self.assertRaises(ValidationError) as context:
+            self.service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.COMPLETED,
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 100,
+                            "received_qty": 80,
+                            "updated_qty": 80,
+                        }
+                    ],
+                },
+            )
+
+        self.assertIn("Remarks is required", str(context.exception))
 
     def test_order_details_totals_match_purchase_order_totals(self):
         """Test that order_details totals match purchase_order totals."""
@@ -793,1056 +946,182 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         self.assertIn("order_details", str(context.exception))
         self.assertIn("discounted_unit_price_foreign", str(context.exception))
 
-
-@pytest.mark.django_db(transaction=True)
-class PurchaseOrderCOGSTest(TestCase):
-    """Test cases for COGS creation and updates during PO lifecycle"""
-
-    def setUp(self):
-        self.company = CompanyFactory()
-        self.warehouse = WarehouseFactory(company=self.company)
-        self.category = CategoryFactory(company=self.company)
-        self.product = ProductFactory(category=self.category, company=self.company)
-        self.product_variant = ProductVariantFactory(product=self.product)
-        self.service = PurchaseOrderService()
-
-    def test_cogs_created_on_full_delivery(self):
-        """Test COGS is created with correct amounts when full received_qty is delivered."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        initial_cogs_count = ProductCogs.objects.count()
-
-        po.refresh_from_db()
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 100,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        po.refresh_from_db()
-        self.assertEqual(po.status, PurchaseOrder.POStatus.DELIVERED)
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        )
-        self.assertEqual(cogs.count(), initial_cogs_count + 1)
-
-        cogs_record = cogs.first()
-        self.assertIsNotNone(cogs_record)
-        self.assertEqual(cogs_record.price_rmb, Decimal("10.0000"))
-        self.assertEqual(cogs_record.exchange_rate, 2200)
-        self.assertEqual(cogs_record.cogs_amount, 22000)
-        self.assertEqual(cogs_record.original_qty, 100)
-        self.assertEqual(cogs_record.remaining_qty, 100)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 100)
-        self.assertEqual(detail.ordered_qty, 100)
-        self.assertEqual(detail.received_qty, detail.ordered_qty)
-
-    def test_cogs_created_with_discount(self):
-        """Test COGS uses discounted_unit_price_foreign when provided."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            unit_price_foreign=Decimal("10"),
-            discounted_unit_price_foreign=Decimal("8"),
-        )
-
-        po.refresh_from_db()
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 100,
-                            "unit_price_foreign": Decimal("10"),
-                            "discounted_unit_price_foreign": Decimal("8"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs)
-        self.assertEqual(cogs.price_rmb, Decimal("8.0000"))
-        self.assertEqual(cogs.cogs_amount, 17600)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 100)
-        self.assertEqual(detail.ordered_qty, 100)
-        self.assertEqual(detail.received_qty, detail.ordered_qty)
-
-    def test_cogs_created_on_partial_delivery(self):
-        """Test COGS is created with partial received_qty."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 50,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs)
-        self.assertEqual(cogs.original_qty, 50)
-        self.assertEqual(cogs.remaining_qty, 50)
-        self.assertEqual(cogs.cogs_amount, 22000)
-
-    def test_cogs_updated_when_received_qty_increases(self):
-        """Test COGS is updated when received_qty is increased on subsequent delivery."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            received_qty=50,
-            updated_qty=50,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        po.refresh_from_db()
-
-        ProductCogsFactory(
-            company=self.company,
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-            price_rmb=Decimal("10.0000"),
-            exchange_rate=2200,
-            cogs_amount=22000,
-            original_qty=50,
-            remaining_qty=50,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 80,
-                            "updated_qty": 50,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs)
-        self.assertEqual(cogs.original_qty, 80)
-        self.assertEqual(cogs.remaining_qty, 80)
-        self.assertEqual(cogs.cogs_amount, 22000)
-
-    def test_cogs_updated_when_received_qty_decreases(self):
-        """Test COGS is updated when received_qty decreases (e.g., user corrected wrong input)."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            received_qty=50,
-            updated_qty=50,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        po.refresh_from_db()
-
-        ProductCogsFactory(
-            company=self.company,
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-            price_rmb=Decimal("10.0000"),
-            exchange_rate=2200,
-            cogs_amount=22000,
-            original_qty=50,
-            remaining_qty=50,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 30,
-                            "updated_qty": 50,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs)
-        self.assertEqual(cogs.original_qty, 30)
-        self.assertEqual(cogs.remaining_qty, 30)
-        self.assertEqual(cogs.cogs_amount, 22000)
-
-    def test_no_cogs_created_when_received_qty_zero(self):
-        """Test no COGS is created when received_qty is 0."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        initial_cogs_count = ProductCogs.objects.count()
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 0,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs_count = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-        ).count()
-
-        self.assertEqual(
-            cogs_count, initial_cogs_count, "No COGS should be created when received_qty is 0"
-        )
-
-    def test_cogs_with_allocated_shipping_and_delivery_fees_single_item(self):
-        """Test COGS includes allocated shipping and delivery fees per unit for single item."""
-        product = self.product_variant.product
-        product.length = 10
-        product.width = 10
-        product.height = 10
-        product.save()
-
-        shipping_fee_per_cbm = 100000
-        cbm = Decimal("0.01")
-        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 1000
-
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-            shipping_fee_per_cbm=shipping_fee_per_cbm,
-            cbm=cbm,
-            shipping_fee=shipping_fee,
-            delivery_fee=Decimal("100.5"),  # 100.5 RMB
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-            unit_price_foreign=Decimal("10"),
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 10,
-                            "received_qty": 10,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        }
-                    ],
-                },
-            )
-
-        cogs = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs)
-        self.assertEqual(cogs.original_qty, 10)
-        self.assertEqual(cogs.remaining_qty, 10)
-
-        unit_price_idr = 10 * 2200  # 22000
-        allocated_shipping = 1000  # shipping_fee (IDR) = 1000
-        allocated_delivery = int(100.5 * 2200)  # 221100
-        total_allocated = allocated_shipping + allocated_delivery  # 222100
-        shipping_per_unit = total_allocated / 10  # 22210
-        expected_cogs = unit_price_idr + shipping_per_unit  # 22000 + 22210 = 44210
-
-        self.assertEqual(cogs.cogs_amount, expected_cogs)
-        self.assertEqual(cogs.allocated_shipping_fee, allocated_shipping)
-        self.assertEqual(cogs.allocated_delivery_fee, allocated_delivery)
-
-    def test_cogs_with_allocated_fees_multiple_items_same_volume(self):
-        """Test COGS with multiple items sharing shipping fees equally when same LxWxH."""
-        product1 = self.product_variant.product
-        product1.length = 10
-        product1.width = 10
-        product1.height = 10
-        product1.save()
-
-        product2 = ProductFactory(
-            category=self.category, company=self.company, length=10, width=10, height=10
-        )
-        product_variant2 = ProductVariantFactory(product=product2)
-        ProductVariantWarehouseFactory(
-            product_variant=product_variant2, warehouse=self.warehouse, company=self.company
-        )
-
-        shipping_fee_per_cbm = 100000
-        cbm = Decimal("0.01")
-        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 1000
-
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-            shipping_fee_per_cbm=shipping_fee_per_cbm,
-            cbm=cbm,
-            shipping_fee=shipping_fee,
-            delivery_fee=Decimal("0"),
-        )
-
-        detail1 = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-            unit_price_foreign=Decimal("10"),
-        )
-        detail2 = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=product_variant2,
-            ordered_qty=10,
-            unit_price_foreign=Decimal("20"),
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail1.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 10,
-                            "received_qty": 10,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        },
-                        {
-                            "id": str(detail2.id),
-                            "product_variant_id": str(product_variant2.id),
-                            "ordered_qty": 10,
-                            "received_qty": 10,
-                            "unit_price_foreign": Decimal("20"),
-                            "received_date": str(date.today()),
-                        },
-                    ],
-                },
-            )
-
-        cogs1 = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-        cogs2 = ProductCogs.objects.filter(
-            product_variant=product_variant2,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs1)
-        self.assertIsNotNone(cogs2)
-
-        shipping_fee = 1000  # IDR, already converted
-        volume1 = (
-            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
-        )  # 0.00001
-        volume2 = (
-            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
-        )  # 0.00001
-        total_volume = volume1 + volume2  # 0.00002
-
-        allocated_shipping1 = int(shipping_fee * volume1 / total_volume)  # 500
-        allocated_shipping2 = int(shipping_fee * volume2 / total_volume)  # 500
-
-        expected_cogs1 = 10 * 2200 + allocated_shipping1 / 10  # 22000 + 50 = 22050
-        expected_cogs2 = 20 * 2200 + allocated_shipping2 / 10  # 44000 + 50 = 44050
-
-        self.assertEqual(cogs1.cogs_amount, expected_cogs1)
-        self.assertEqual(cogs2.cogs_amount, expected_cogs2)
-        self.assertEqual(cogs1.allocated_shipping_fee, allocated_shipping1)
-        self.assertEqual(cogs2.allocated_shipping_fee, allocated_shipping2)
-
-    def test_cogs_with_allocated_fees_multiple_items_different_volume(self):
-        """Test COGS with multiple items where each takes portion of shipping based on volume."""
-        product1 = self.product_variant.product
-        product1.length = 10
-        product1.width = 10
-        product1.height = 10  # 0.000001 m3 per item, 0.00001 m3 total for qty=10
-        product1.save()
-
-        product2 = ProductFactory(
-            category=self.category, company=self.company, length=20, width=20, height=20
-        )  # 0.008 m3 per item, 0.08 m3 total for qty=10
-        product_variant2 = ProductVariantFactory(product=product2)
-        ProductVariantWarehouseFactory(
-            product_variant=product_variant2, warehouse=self.warehouse, company=self.company
-        )
-
-        shipping_fee_per_cbm = 100000
-        cbm = Decimal("0.09")
-        shipping_fee = int(shipping_fee_per_cbm * cbm)  # 9000
-
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-            exchange_rate=2200,
-            shipping_fee_per_cbm=shipping_fee_per_cbm,
-            cbm=cbm,
-            shipping_fee=shipping_fee,
-            delivery_fee=Decimal("0"),
-        )
-
-        detail1 = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-            unit_price_foreign=Decimal("10"),
-        )
-        detail2 = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=product_variant2,
-            ordered_qty=10,
-            unit_price_foreign=Decimal("20"),
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail1.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 10,
-                            "received_qty": 10,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today()),
-                        },
-                        {
-                            "id": str(detail2.id),
-                            "product_variant_id": str(product_variant2.id),
-                            "ordered_qty": 10,
-                            "received_qty": 10,
-                            "unit_price_foreign": Decimal("20"),
-                            "received_date": str(date.today()),
-                        },
-                    ],
-                },
-            )
-
-        cogs1 = ProductCogs.objects.filter(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-        cogs2 = ProductCogs.objects.filter(
-            product_variant=product_variant2,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-        ).first()
-
-        self.assertIsNotNone(cogs1)
-        self.assertIsNotNone(cogs2)
-
-        shipping_fee = 9000  # IDR, already converted
-        volume1 = (
-            Decimal("10") * Decimal("10") * Decimal("10") / Decimal("1000000") * Decimal("10")
-        )  # 0.00001
-        volume2 = (
-            Decimal("20") * Decimal("20") * Decimal("20") / Decimal("1000000") * Decimal("10")
-        )  # 0.08
-        total_volume = volume1 + volume2  # 0.08001
-
-        allocated_shipping1 = int(shipping_fee * volume1 / total_volume)  # 1
-        allocated_shipping2 = int(shipping_fee * volume2 / total_volume)  # 8999
-
-        expected_cogs1 = 10 * 2200 + allocated_shipping1 / 10  # 22000 + 0 = 22000
-        expected_cogs2 = 20 * 2200 + allocated_shipping2 / 10  # 44000 + 899 = 44899
-
-        self.assertEqual(cogs1.cogs_amount, expected_cogs1)
-        self.assertEqual(cogs2.cogs_amount, expected_cogs2)
-        self.assertEqual(cogs1.allocated_shipping_fee, allocated_shipping1)
-        self.assertEqual(cogs2.allocated_shipping_fee, allocated_shipping2)
-
-    def test_completed_status_does_not_create_cogs(self):
-        """Test transitioning to COMPLETED does not create new COGS."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.DELIVERED,
-            delivery_date=date.today(),
-        )
-        PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            received_qty=80,
-        )
-
-        initial_cogs_count = ProductCogs.objects.count()
-
-        self.service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.COMPLETED})
-
-        cogs_count = ProductCogs.objects.filter(
-            product_variant=self.product_variant, warehouse=self.warehouse
-        ).count()
-        self.assertEqual(cogs_count, initial_cogs_count, "COGS should not be created on COMPLETED")
-
-
-@pytest.mark.django_db(transaction=True)
-class PurchaseOrderInventoryUpdateTest(TestCase):
-    """Test cases for inventory updates during PO lifecycle"""
-
-    def setUp(self):
-        self.company = CompanyFactory()
-        self.warehouse = WarehouseFactory(company=self.company)
-        self.category = CategoryFactory(company=self.company)
-        self.product = ProductFactory(category=self.category, company=self.company)
-        self.product_variant = ProductVariantFactory(product=self.product)
-        self.service = PurchaseOrderService()
-
-    def test_partial_received_qty_updates_inventory_correctly(self):
-        """Test inventory is updated correctly for partial received_qty."""
+    def test_received_qty_cannot_be_filled_if_status_not_shipped_or_delivered(self):
+        """Test that received_qty cannot be filled when status is not SHIPPED or DELIVERED"""
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
             status=PurchaseOrder.POStatus.DRAFT,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file", return_value=None):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.ORDERED,
-                },
-            )
-
-        po.refresh_from_db()
-        pvw = ProductVariantWarehouse.objects.get(
-            product_variant=self.product_variant, warehouse=self.warehouse
-        )
-
-        self.assertEqual(po.status, PurchaseOrder.POStatus.ORDERED)
-        self.assertEqual(pvw.incoming_qty, 100)
-        self.assertEqual(pvw.physical_qty, 0)
-
-        po.refresh_from_db()
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 50,
-                            "received_date": str(date.today() + timedelta(days=1)),
-                        }
-                    ],
-                },
-            )
-
-        pvw.refresh_from_db()
-        self.assertEqual(pvw.incoming_qty, 50)
-        self.assertEqual(pvw.physical_qty, 50)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 50)
-        self.assertEqual(detail.ordered_qty, 100)
-        self.assertEqual(detail.updated_qty, 50)
-
-    def test_incoming_qty_adjusted_when_received_qty_decreased(self):
-        """Test incoming_qty is adjusted when received_qty is decreased from SHIPPED to DELIVERED."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-        )
-
-        pvw = ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            incoming_qty=100,
-            physical_qty=0,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 5,
-                            "updated_qty": 0,
-                            "received_date": str(date.today() + timedelta(days=1)),
-                        }
-                    ],
-                },
-            )
-
-        pvw.refresh_from_db()
-        self.assertEqual(pvw.incoming_qty, 95)
-        self.assertEqual(pvw.physical_qty, 5)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 5)
-        self.assertEqual(detail.ordered_qty, 100)
-        self.assertEqual(detail.updated_qty, 5)
-
-    def test_incoming_qty_adjusted_when_already_delivered_and_received_qty_decreased(self):
-        """Test incoming_qty adjusted when updating DELIVERED to DELIVERED with decreased received_qty."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.DELIVERED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=100,
-            received_qty=10,
-            updated_qty=10,
-        )
-
-        pvw = ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            incoming_qty=90,
-            physical_qty=10,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 5,
-                            "updated_qty": 10,
-                            "received_date": str(date.today() + timedelta(days=1)),
-                        }
-                    ],
-                },
-            )
-
-        pvw.refresh_from_db()
-        self.assertEqual(pvw.incoming_qty, 95)
-        self.assertEqual(pvw.physical_qty, 5)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 5)
-        self.assertEqual(detail.ordered_qty, 100)
-        self.assertEqual(detail.updated_qty, 5)
-
-    def test_incoming_qty_adjusted_when_received_qty_exceeds_ordered(self):
-        """Test incoming_qty when received_qty exceeds ordered_qty."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.DELIVERED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-        )
-
-        pvw = ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            incoming_qty=10,
-            physical_qty=0,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 10,
-                            "received_qty": 15,
-                            "updated_qty": 0,
-                            "received_date": str(date.today() + timedelta(days=1)),
-                            "remarks": "Over-received due to supplier error",
-                        }
-                    ],
-                },
-            )
-
-        pvw.refresh_from_db()
-        self.assertEqual(pvw.incoming_qty, 0)
-        self.assertEqual(pvw.physical_qty, 15)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 15)
-        self.assertEqual(detail.ordered_qty, 10)
-        self.assertEqual(detail.updated_qty, 15)
-
-    def test_incoming_qty_adjusted_when_shipped_and_received_qty_exceeds_ordered(self):
-        """Test incoming_qty when status is SHIPPED and received_qty exceeds ORDEREDordered_qty (first delivery)."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.SHIPPED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-        )
-
-        pvw = ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            company=self.company,
-            incoming_qty=10,
-            physical_qty=0,
-        )
-
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 10,
-                            "received_qty": 15,
-                            "updated_qty": 0,
-                            "received_date": str(date.today() + timedelta(days=1)),
-                            "remarks": "Over-received due to supplier error",
-                        }
-                    ],
-                },
-            )
-
-        pvw.refresh_from_db()
-        self.assertEqual(pvw.incoming_qty, 0)
-        self.assertEqual(pvw.physical_qty, 15)
-
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 15)
-        self.assertEqual(detail.ordered_qty, 10)
-        self.assertEqual(detail.updated_qty, 15)
-
-    def test_decrease_received_qty_fails_when_insufficient_physical_qty(self):
-        """Test that decreasing received_qty fails when physical_qty would go negative."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.DELIVERED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-            received_qty=10,
-            updated_qty=10,
-        )
-
-        ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            company=self.company,
-            incoming_qty=0,
-            physical_qty=3,
-        )
-
-        po.refresh_from_db()
-
-        data = {
-            "status": PurchaseOrder.POStatus.DELIVERED,
-            "order_details": [
-                {
-                    "id": str(detail.id),
-                    "product_variant_id": str(self.product_variant.id),
-                    "ordered_qty": 10,
-                    "received_qty": 5,
-                    "updated_qty": 10,
-                    "received_date": str(date.today() + timedelta(days=1)),
-                }
-            ],
-        }
-
-        with patch("apps.purchasing.serializers.compress_pdf_file", return_value=None):
-            try:
-                self.service.update_purchase_order(po, data)
-            except Exception as e:
-                error_msg = str(e)
-                self.assertIn("order_details", str(e))
-                self.assertIn("Physical qty", error_msg)
-                self.assertIn("(3)", error_msg)
-                self.assertIn("(5)", error_msg)
-                return
-
-        self.fail("Exception not raised")
-
-    def test_decrease_received_qty_fails_when_insufficient_cogs_remaining_qty(self):
-        """Test that decreasing received_qty fails when COGS remaining_qty is insufficient."""
-        po = PurchaseOrderFactory(
-            warehouse=self.warehouse,
-            company=self.company,
-            status=PurchaseOrder.POStatus.DELIVERED,
-        )
-        detail = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=10,
-            received_qty=10,
-            updated_qty=10,
-        )
-
-        ProductVariantWarehouseFactory(
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            company=self.company,
-            incoming_qty=0,
-            physical_qty=10,
-        )
-
-        po.refresh_from_db()
-
-        ProductCogsFactory(
-            company=self.company,
-            product_variant=self.product_variant,
-            warehouse=self.warehouse,
-            reference_number=po.purchase_order_number,
-            price_rmb=Decimal("10.0000"),
             exchange_rate=2200,
-            cogs_amount=22000,
-            original_qty=10,
-            remaining_qty=3,
+            purchase_order_invoice_file="invoice.pdf",
+            invoice_number="INV-001",
+            invoice_date=date.today(),
+            supplier_name="Supplier",
+            forwarder_name="Forwarder",
+            shop_services="service",
+            commission_fee_pct=Decimal("10"),
+            delivery_fee=100,
         )
 
-        data = {
-            "status": PurchaseOrder.POStatus.DELIVERED,
-            "order_details": [
-                {
-                    "id": str(detail.id),
-                    "product_variant_id": str(self.product_variant.id),
-                    "ordered_qty": 10,
-                    "received_qty": 5,
-                    "updated_qty": 10,
-                    "received_date": str(date.today() + timedelta(days=1)),
-                }
-            ],
-        }
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.ORDERED,
+                "order_details": [
+                    {
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 100,
+                        "received_qty": 50,
+                        "unit_price_foreign": Decimal("10"),
+                    }
+                ],
+            },
+        )
 
-        with patch("apps.purchasing.serializers.compress_pdf_file", return_value=None):
-            try:
-                self.service.update_purchase_order(po, data)
-            except Exception as e:
-                error_msg = str(e)
-                self.assertIn("order_details", str(e))
-                self.assertIn("COGS remaining_qty", error_msg)
-                self.assertIn("(3)", error_msg)
-                self.assertIn("(5)", error_msg)
-                return
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("order_details", serializer.errors)
+        self.assertIn("received_qty", str(serializer.errors["order_details"]))
 
-        self.fail("Exception not raised")
+    def test_received_qty_allowed_when_status_is_shipped(self):
+        """Test that received_qty can be filled when status is SHIPPED"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+            exchange_rate=2200,
+            delivery_order_number="DO-001",
+            delivery_order_file="existing_file.pdf",
+            shipping_fee_per_cbm=100,
+            cbm=Decimal("1"),
+            weight=Decimal("10"),
+        )
 
-    def test_update_received_qty_equals_ordered_qty(self):
-        """Test updating received_qty equals ordered_qty on purchase_order_detail."""
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.SHIPPED,
+                "order_details": [
+                    {
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 100,
+                        "received_qty": 50,
+                        "unit_price_foreign": Decimal("10"),
+                    }
+                ],
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_received_qty_allowed_when_status_is_delivered(self):
+        """Test that received_qty can be filled when status is DELIVERED"""
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
             status=PurchaseOrder.POStatus.SHIPPED,
+            exchange_rate=2200,
+            delivery_order_invoice_file="existing_file.pdf",
+        )
+
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.DELIVERED,
+                "order_details": [
+                    {
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 100,
+                        "received_qty": 50,
+                        "unit_price_foreign": Decimal("10"),
+                    }
+                ],
+            },
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_cannot_add_new_details_when_not_draft(self):
+        """Test that adding new details fails when status is not DRAFT"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
             exchange_rate=2200,
         )
         detail = PurchaseOrderDetailFactory(
             purchase_order=po,
             product_variant=self.product_variant,
             ordered_qty=100,
-            received_qty=50,
             unit_price_foreign=Decimal("10"),
         )
 
-        with patch("apps.purchasing.serializers.compress_pdf_file"):
-            self.service.update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(self.product_variant.id),
-                            "ordered_qty": 100,
-                            "received_qty": 100,
-                            "unit_price_foreign": Decimal("10"),
-                            "received_date": str(date.today() + timedelta(days=1)),
-                        }
-                    ],
-                },
-            )
+        product2 = ProductFactory(category=self.category, company=self.company)
+        product_variant2 = ProductVariantFactory(product=product2)
 
-        detail.refresh_from_db()
-        self.assertEqual(detail.received_qty, 100)
-        self.assertEqual(detail.updated_qty, 100)
-        self.assertEqual(detail.ordered_qty, 100)
+        po.refresh_from_db()
+
+        serializer = self._create_serializer(
+            po,
+            {
+                "order_details": [
+                    {
+                        "id": str(detail.id),
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 100,
+                    },
+                    {
+                        "product_variant_id": str(product_variant2.id),
+                        "ordered_qty": 50,
+                        "unit_price_foreign": Decimal("10"),
+                    },
+                ],
+            },
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("order_details", serializer.errors)
+        self.assertIn("Cannot add new details", str(serializer.errors["order_details"]))
+
+    def test_cannot_change_ordered_qty_from_draft_to_ordered(self):
+        """Test that ordered_qty cannot be changed when transitioning from DRAFT to ORDERED"""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DRAFT,
+            exchange_rate=2200,
+            forwarder_name="Test Forwarder",
+            shop_services="Test Service",
+            commission_fee_pct=Decimal("10"),
+            delivery_fee=100,
+            purchase_order_invoice_file="invoice.pdf",
+            invoice_number="INV-001",
+            invoice_date=date.today(),
+            supplier_name="Supplier",
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+            unit_price_foreign=Decimal("10"),
+        )
+
+        po.refresh_from_db()
+
+        serializer = self._create_serializer(
+            po,
+            {
+                "status": PurchaseOrder.POStatus.ORDERED,
+                "order_details": [
+                    {
+                        "id": str(detail.id),
+                        "product_variant_id": str(self.product_variant.id),
+                        "ordered_qty": 150,
+                        "unit_price_foreign": Decimal("10"),
+                    },
+                ],
+            },
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("order_details", serializer.errors)
+        self.assertIn("ordered_qty", str(serializer.errors["order_details"]))

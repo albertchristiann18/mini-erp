@@ -528,6 +528,20 @@ class PurchaseOrderUpdateSerializer(serializers.ModelSerializer):
                     }
                 )
 
+        if new_status not in [
+            PurchaseOrder.POStatus.SHIPPED,
+            PurchaseOrder.POStatus.DELIVERED,
+            None,
+        ]:
+            order_details = attrs.get("order_details", [])
+            for detail_data in order_details:
+                if detail_data.get("received_qty") is not None:
+                    raise serializers.ValidationError(
+                        {
+                            "order_details": "received_qty can only be provided when status is SHIPPED or DELIVERED."
+                        }
+                    )
+
         order_details = attrs.get("order_details")
 
         if (

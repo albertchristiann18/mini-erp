@@ -41,10 +41,22 @@ class InventoryService:
         if movement_type == StockMovement.MovementType.TRANSFER:
             return  # skip transfer type
 
-        variant = ProductVariant.objects.select_for_update().get(id=variant_id)
+        variant = (
+            ProductVariant.objects.select_for_update()
+            .only("id", "total_available_qty", "company_id")
+            .get(id=variant_id)
+        )
         pvw = (
             ProductVariantWarehouse.objects.select_for_update()
             .filter(product_variant=variant, warehouse_id=warehouse_id)
+            .only(
+                "id",
+                "incoming_qty",
+                "physical_qty",
+                "product_variant_id",
+                "warehouse_id",
+                "company_id",
+            )
             .last()
         )
         if not pvw:
@@ -138,13 +150,13 @@ class InventoryService:
         StockMovement.objects.bulk_create(stock_movements, batch_size=100)
 
     @transaction.atomic
-    def update_inventory_on_po(
+    def update_stock_on_po(
         self,
         po: PurchaseOrder,
         new_status: str,
         data: list[dict],
     ) -> None:
-        """Update inventory when PO status changes.
+        """Update stock/inventory when PO status changes.
 
         For PURCHASE (ORDERED):
         - ProductVariantWarehouse.incoming_qty += ordered_qty
@@ -155,12 +167,10 @@ class InventoryService:
         - ProductVariantWarehouse.physical_qty += received_qty
         - ProductVariant.total_incoming_qty -= remaining_qty
         - ProductVariant.total_available_qty += received_qty
-        - Create COGS record
 
         For INBOUND (DELIVERED) - subsequent (already_processed > 0):
         - ProductVariantWarehouse.physical_qty += qty_diff
         - ProductVariant.total_available_qty += qty_diff
-        - Update COGS record if exists
 
         Args:
             po: PurchaseOrder instance (must have warehouse.id attribute)
@@ -172,12 +182,22 @@ class InventoryService:
 
         product_variant_ids = [item.get("product_variant_id") for item in data]
         product_variants = list(
-            ProductVariant.objects.select_for_update().filter(id__in=product_variant_ids)
+            ProductVariant.objects.select_for_update()
+            .only("id", "total_incoming_qty", "total_available_qty", "company_id", "udate")
+            .filter(id__in=product_variant_ids)
         )
         product_variant_warehouses = list(
-            ProductVariantWarehouse.objects.select_for_update().filter(
-                product_variant__in=product_variants, warehouse_id=po.warehouse.id
+            ProductVariantWarehouse.objects.select_for_update()
+            .only(
+                "id",
+                "incoming_qty",
+                "physical_qty",
+                "product_variant_id",
+                "warehouse_id",
+                "company_id",
+                "udate",
             )
+            .filter(product_variant__in=product_variants, warehouse_id=po.warehouse.id)
         )
 
         map_product_variant = {str(pv.id): pv for pv in product_variants}
@@ -185,58 +205,11 @@ class InventoryService:
             str(pvw.product_variant.id): pvw for pvw in product_variant_warehouses
         }
 
-        reference_number: str | None = getattr(po, "purchase_order_number", None)
-        existing_cogs_map: dict = {}
-        if new_status == PurchaseOrder.POStatus.DELIVERED and reference_number:
-            existing_cogs_map = {
-                str(cogs.product_variant.id): cogs
-                for cogs in ProductCogs.objects.select_for_update().filter(
-                    product_variant_id__in=product_variant_ids,
-                    warehouse=po.warehouse,
-                    reference_number=reference_number,
-                )
-            }
-
-        shipping_fee = getattr(po, "shipping_fee", 0) or 0
-        delivery_fee = Decimal(str(getattr(po, "delivery_fee", 0) or 0))
-        exchange_rate = Decimal(str(getattr(po, "exchange_rate", 1) or 1))
-        total_cbm = Decimal(str(getattr(po, "cbm", 0) or 0))
-
-        item_volumes: dict = {}
-        total_volume = Decimal("0")
-        for item in data:
-            pv = map_product_variant.get(str(item.get("product_variant_id")))
-            if pv and pv.product:
-                length = Decimal(str(pv.product.length or 0))
-                width = Decimal(str(pv.product.width or 0))
-                height = Decimal(str(pv.product.height or 0))
-                ordered_qty = Decimal(str(item.get("ordered_qty", 0) or 0))
-                item_volume = length * width * height / Decimal("1000000")
-                item_volumes[str(item.get("product_variant_id"))] = {
-                    "volume": item_volume,
-                    "qty": ordered_qty,
-                    "total_volume": item_volume * ordered_qty,
-                }
-                total_volume += item_volume * ordered_qty
-
-        if total_volume > 0 and total_cbm > 0:
-            total_delivery_fee_idr = delivery_fee * exchange_rate
-            for item_id, item_data in item_volumes.items():
-                volume_ratio = item_data["total_volume"] / total_volume
-                item_data["shipping_share"] = int(round(shipping_fee * volume_ratio))
-                item_data["delivery_share"] = int(round(total_delivery_fee_idr * volume_ratio))
-        else:
-            for item_id in item_volumes:
-                item_volumes[item_id]["shipping_share"] = 0
-                item_volumes[item_id]["delivery_share"] = 0
-
         new_pvws: list[ProductVariantWarehouse] = []
         update_pvws: list[ProductVariantWarehouse] = []
         update_pv: list[ProductVariant] = []
         update_fields_pvw = set()
         update_fields_pv = set()
-        create_cogs_records: list[ProductCogs] = []
-        update_cogs_records: list[ProductCogs] = []
         movements: list[dict] = []
 
         for item in data:
@@ -248,7 +221,7 @@ class InventoryService:
 
             pv = map_product_variant.get(str(product_variant_id))
             if not pv:
-                pv = ProductVariant.objects.get(id=product_variant_id)
+                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
 
             pvw = map_product_warehouse.get(str(product_variant_id))
             created_pvw = False
@@ -312,62 +285,6 @@ class InventoryService:
                             "note": item.get("note"),
                         }
                     )
-
-                    if received_qty > 0:
-                        unit_price_foreign = (
-                            item.get("discounted_unit_price_foreign")
-                            or item.get("unit_price_foreign")
-                            or 0
-                        )
-                        item_exchange_rate = item.get("exchange_rate") or int(exchange_rate)
-                        invoice_date = getattr(po, "invoice_date", None) or timezone.now().date()
-
-                        allocated_shipping = 0
-                        allocated_delivery = 0
-                        if str(product_variant_id) in item_volumes:
-                            vol_data = item_volumes[str(product_variant_id)]
-                            allocated_shipping = vol_data.get("shipping_share", 0)
-                            allocated_delivery = vol_data.get("delivery_share", 0)
-
-                        unit_price_idr = Decimal("0")
-                        if unit_price_foreign and item_exchange_rate and item_exchange_rate != 1:
-                            price_rmb = unit_price_foreign
-                            unit_price_idr = Decimal(str(unit_price_foreign)) * Decimal(
-                                str(item_exchange_rate)
-                            )
-                        else:
-                            price_rmb = Decimal("0")
-                            unit_price_idr = Decimal(str(item.get("unit_price_base") or 0))
-
-                        shipping_per_unit = (
-                            Decimal(str(allocated_shipping)) / Decimal(str(received_qty))
-                            if received_qty > 0
-                            else Decimal("0")
-                        )
-                        delivery_per_unit = (
-                            Decimal(str(allocated_delivery)) / Decimal(str(received_qty))
-                            if received_qty > 0
-                            else Decimal("0")
-                        )
-                        cogs_amount = int(unit_price_idr + shipping_per_unit + delivery_per_unit)
-
-                        assert reference_number is not None
-                        create_cogs_records.append(
-                            ProductCogs(
-                                company=po.company,
-                                product_variant=pv,
-                                warehouse=po.warehouse,
-                                reference_number=reference_number,
-                                purchase_date=invoice_date,
-                                price_rmb=price_rmb,
-                                exchange_rate=item_exchange_rate,
-                                cogs_amount=cogs_amount,
-                                allocated_shipping_fee=allocated_shipping,
-                                allocated_delivery_fee=allocated_delivery,
-                                original_qty=received_qty,
-                                remaining_qty=received_qty,
-                            )
-                        )
                 else:
                     if qty_diff != 0:
                         pvw.physical_qty += qty_diff
@@ -393,30 +310,6 @@ class InventoryService:
 
                             pv.total_incoming_qty += incoming_adjustment
                             update_fields_pv.add("total_incoming_qty")
-
-                        existing_cogs = existing_cogs_map.get(product_variant_id)
-                        if existing_cogs:
-                            existing_cogs.original_qty = received_qty
-                            existing_cogs.remaining_qty += qty_diff
-                            unit_price_idr = Decimal(str(existing_cogs.price_rmb)) * Decimal(
-                                str(existing_cogs.exchange_rate)
-                            )
-                            shipping_per_unit = (
-                                Decimal(str(existing_cogs.allocated_shipping_fee))
-                                / Decimal(str(received_qty))
-                                if received_qty > 0
-                                else Decimal("0")
-                            )
-                            delivery_per_unit = (
-                                Decimal(str(existing_cogs.allocated_delivery_fee))
-                                / Decimal(str(received_qty))
-                                if received_qty > 0
-                                else Decimal("0")
-                            )
-                            existing_cogs.cogs_amount = int(
-                                unit_price_idr + shipping_per_unit + delivery_per_unit
-                            )
-                            update_cogs_records.append(existing_cogs)
 
             pvw.udate = timezone.now()
             pv.udate = timezone.now()
@@ -448,6 +341,201 @@ class InventoryService:
             ProductVariant.objects.bulk_update(
                 update_pv, fields=list(update_fields_pv), batch_size=100
             )
+
+    @transaction.atomic
+    def update_cogs_on_po(
+        self,
+        po: PurchaseOrder,
+        new_status: str,
+        data: list[dict],
+    ) -> None:
+        """Update COGS when PO status changes.
+
+        For INBOUND (DELIVERED) - first time (already_processed == 0):
+        - Create COGS record
+
+        For INBOUND (DELIVERED) - subsequent (already_processed > 0):
+        - Update COGS record if exists
+
+        Args:
+            po: PurchaseOrder instance (must have warehouse.id attribute)
+            new_status: Target status (ORDERED or DELIVERED)
+            data: List of dicts with product_variant_id, ordered_qty, received_qty, updated_qty
+        """
+        if not data:
+            return
+
+        if new_status != PurchaseOrder.POStatus.DELIVERED:
+            return
+
+        product_variant_ids = [item.get("product_variant_id") for item in data]
+        product_variants = list(
+            ProductVariant.objects.filter(id__in=product_variant_ids)
+            .select_related("product")
+            .only(
+                "id",
+                "product_id",
+                "company_id",
+                "product__length",
+                "product__width",
+                "product__height",
+            )
+        )
+
+        map_product_variant = {str(pv.id): pv for pv in product_variants}
+
+        reference_number: str | None = getattr(po, "purchase_order_number", None)
+        existing_cogs_map: dict = {}
+        if reference_number:
+            existing_cogs_map = {
+                str(cogs.product_variant.id): cogs
+                for cogs in ProductCogs.objects.select_for_update()
+                .only(
+                    "id",
+                    "product_variant_id",
+                    "warehouse_id",
+                    "company_id",
+                    "original_qty",
+                    "remaining_qty",
+                    "price_rmb",
+                    "exchange_rate",
+                    "allocated_shipping_fee",
+                    "allocated_delivery_fee",
+                    "cogs_amount",
+                )
+                .filter(
+                    product_variant_id__in=product_variant_ids,
+                    warehouse=po.warehouse,
+                    reference_number=reference_number,
+                )
+            }
+
+        shipping_fee = getattr(po, "shipping_fee", 0) or 0
+        delivery_fee = Decimal(str(getattr(po, "delivery_fee", 0) or 0))
+        exchange_rate = Decimal(str(getattr(po, "exchange_rate", 1) or 1))
+        total_cbm = Decimal(str(getattr(po, "cbm", 0) or 0))
+
+        item_volumes: dict = {}
+        total_volume = Decimal("0")
+        for item in data:
+            pv = map_product_variant.get(str(item.get("product_variant_id")))
+            if pv and pv.product:
+                length = Decimal(str(pv.product.length or 0))
+                width = Decimal(str(pv.product.width or 0))
+                height = Decimal(str(pv.product.height or 0))
+                ordered_qty = Decimal(str(item.get("ordered_qty", 0) or 0))
+                item_volume = length * width * height / Decimal("1000000")
+                item_volumes[str(item.get("product_variant_id"))] = {
+                    "volume": item_volume,
+                    "qty": ordered_qty,
+                    "total_volume": item_volume * ordered_qty,
+                }
+                total_volume += item_volume * ordered_qty
+
+        if total_volume > 0 and total_cbm > 0:
+            total_delivery_fee_idr = delivery_fee * exchange_rate
+            for item_id, item_data in item_volumes.items():
+                volume_ratio = item_data["total_volume"] / total_volume
+                item_data["shipping_share"] = int(round(shipping_fee * volume_ratio))
+                item_data["delivery_share"] = int(round(total_delivery_fee_idr * volume_ratio))
+        else:
+            for item_id in item_volumes:
+                item_volumes[item_id]["shipping_share"] = 0
+                item_volumes[item_id]["delivery_share"] = 0
+
+        create_cogs_records: list[ProductCogs] = []
+        update_cogs_records: list[ProductCogs] = []
+
+        for item in data:
+            product_variant_id = item.get("product_variant_id")
+            received_qty = item.get("received_qty", 0)
+            already_processed = item.get("updated_qty", 0) or 0
+            qty_diff = received_qty - already_processed
+
+            pv = map_product_variant.get(str(product_variant_id))
+            if not pv:
+                raise ValidationError(f"ProductVariant with id {product_variant_id} not found")
+
+            if already_processed == 0:
+                if received_qty > 0:
+                    unit_price_foreign = (
+                        item.get("discounted_unit_price_foreign")
+                        or item.get("unit_price_foreign")
+                        or 0
+                    )
+                    item_exchange_rate = item.get("exchange_rate") or int(exchange_rate)
+                    invoice_date = getattr(po, "invoice_date", None) or timezone.now().date()
+
+                    allocated_shipping = 0
+                    allocated_delivery = 0
+                    if str(product_variant_id) in item_volumes:
+                        vol_data = item_volumes[str(product_variant_id)]
+                        allocated_shipping = vol_data.get("shipping_share", 0)
+                        allocated_delivery = vol_data.get("delivery_share", 0)
+
+                    unit_price_idr = Decimal("0")
+                    if unit_price_foreign and item_exchange_rate and item_exchange_rate != 1:
+                        price_rmb = unit_price_foreign
+                        unit_price_idr = Decimal(str(unit_price_foreign)) * Decimal(
+                            str(item_exchange_rate)
+                        )
+                    else:
+                        price_rmb = Decimal("0")
+                        unit_price_idr = Decimal(str(item.get("unit_price_base") or 0))
+
+                    shipping_per_unit = (
+                        Decimal(str(allocated_shipping)) / Decimal(str(received_qty))
+                        if received_qty > 0
+                        else Decimal("0")
+                    )
+                    delivery_per_unit = (
+                        Decimal(str(allocated_delivery)) / Decimal(str(received_qty))
+                        if received_qty > 0
+                        else Decimal("0")
+                    )
+                    cogs_amount = int(unit_price_idr + shipping_per_unit + delivery_per_unit)
+
+                    assert reference_number is not None
+                    create_cogs_records.append(
+                        ProductCogs(
+                            company=po.company,
+                            product_variant=pv,
+                            warehouse=po.warehouse,
+                            reference_number=reference_number,
+                            purchase_date=invoice_date,
+                            price_rmb=price_rmb,
+                            exchange_rate=item_exchange_rate,
+                            cogs_amount=cogs_amount,
+                            allocated_shipping_fee=allocated_shipping,
+                            allocated_delivery_fee=allocated_delivery,
+                            original_qty=received_qty,
+                            remaining_qty=received_qty,
+                        )
+                    )
+            else:
+                existing_cogs = existing_cogs_map.get(product_variant_id)
+                if existing_cogs and qty_diff != 0:
+                    existing_cogs.original_qty = received_qty
+                    existing_cogs.remaining_qty += qty_diff
+                    unit_price_idr = Decimal(str(existing_cogs.price_rmb)) * Decimal(
+                        str(existing_cogs.exchange_rate)
+                    )
+                    shipping_per_unit = (
+                        Decimal(str(existing_cogs.allocated_shipping_fee))
+                        / Decimal(str(received_qty))
+                        if received_qty > 0
+                        else Decimal("0")
+                    )
+                    delivery_per_unit = (
+                        Decimal(str(existing_cogs.allocated_delivery_fee))
+                        / Decimal(str(received_qty))
+                        if received_qty > 0
+                        else Decimal("0")
+                    )
+                    existing_cogs.cogs_amount = int(
+                        unit_price_idr + shipping_per_unit + delivery_per_unit
+                    )
+                    update_cogs_records.append(existing_cogs)
 
         if create_cogs_records:
             ProductCogs.objects.bulk_create(create_cogs_records, batch_size=100)

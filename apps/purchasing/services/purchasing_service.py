@@ -226,11 +226,16 @@ class PurchaseOrderService:
                 )
 
         if inventory_data:
-            assert new_status is not None
             inventory_service = InventoryService()
-            inventory_service.update_inventory_on_po(
+            status_for_inventory: str = new_status  # type: ignore[assignment]
+            inventory_service.update_stock_on_po(
                 po=po,
-                new_status=new_status,
+                new_status=status_for_inventory,
+                data=inventory_data,
+            )
+            inventory_service.update_cogs_on_po(
+                po=po,
+                new_status=status_for_inventory,
                 data=inventory_data,
             )
 
