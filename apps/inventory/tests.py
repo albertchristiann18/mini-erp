@@ -604,6 +604,90 @@ class InventoryServiceStockUpdateTest(TestCase):
         self.assertEqual(self.product_variant.total_incoming_qty, 50)
         self.assertEqual(self.product_variant.total_available_qty, 50)
 
+    def test_update_stock_on_po_completed_clears_incoming(self):
+        """Test that COMPLETED status clears remaining incoming_qty."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DELIVERED,
+        )
+
+        pvw = ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            company=self.company,
+            incoming_qty=20,
+            physical_qty=80,
+        )
+        self.product_variant.total_incoming_qty = 20
+        self.product_variant.total_available_qty = 80
+        self.product_variant.save()
+
+        data = [
+            {
+                "product_variant_id": str(self.product_variant.id),
+                "ordered_qty": 100,
+                "received_qty": 80,
+                "updated_qty": 80,
+            }
+        ]
+
+        self.service.update_stock_on_po(
+            po=po,
+            new_status=PurchaseOrder.POStatus.COMPLETED,
+            data=data,
+        )
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.incoming_qty, 0)
+        self.assertEqual(pvw.physical_qty, 80)
+
+        self.product_variant.refresh_from_db()
+        self.assertEqual(self.product_variant.total_incoming_qty, 0)
+        self.assertEqual(self.product_variant.total_available_qty, 80)
+
+    def test_update_stock_on_po_completed_no_incoming(self):
+        """Test that COMPLETED status does nothing when incoming_qty is already 0."""
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DELIVERED,
+        )
+
+        pvw = ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            company=self.company,
+            incoming_qty=0,
+            physical_qty=100,
+        )
+        self.product_variant.total_incoming_qty = 0
+        self.product_variant.total_available_qty = 100
+        self.product_variant.save()
+
+        data = [
+            {
+                "product_variant_id": str(self.product_variant.id),
+                "ordered_qty": 100,
+                "received_qty": 100,
+                "updated_qty": 100,
+            }
+        ]
+
+        self.service.update_stock_on_po(
+            po=po,
+            new_status=PurchaseOrder.POStatus.COMPLETED,
+            data=data,
+        )
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.incoming_qty, 0)
+        self.assertEqual(pvw.physical_qty, 100)
+
+        self.product_variant.refresh_from_db()
+        self.assertEqual(self.product_variant.total_incoming_qty, 0)
+        self.assertEqual(self.product_variant.total_available_qty, 100)
+
 
 class InventoryServiceCOGSUpdateTest(TestCase):
     """Test cases for InventoryService.update_cogs_on_po method"""

@@ -266,25 +266,6 @@ class InventoryService:
                     pv.total_incoming_qty = remaining_qty
                     pv.total_available_qty += received_qty
                     update_fields_pv.update(["total_incoming_qty", "total_available_qty"])
-
-                    movements.append(
-                        {
-                            "product_variant_id": product_variant_id,
-                            "qty": ordered_qty,
-                            "field_change": "incoming_qty",
-                            "qty_before": pvw.incoming_qty + ordered_qty,
-                            "note": item.get("note"),
-                        }
-                    )
-                    movements.append(
-                        {
-                            "product_variant_id": product_variant_id,
-                            "qty": received_qty,
-                            "field_change": "physical_qty",
-                            "qty_before": pvw.physical_qty - received_qty,
-                            "note": item.get("note"),
-                        }
-                    )
                 else:
                     if qty_diff != 0:
                         pvw.physical_qty += qty_diff
@@ -310,6 +291,25 @@ class InventoryService:
 
                             pv.total_incoming_qty += incoming_adjustment
                             update_fields_pv.add("total_incoming_qty")
+
+            elif new_status == PurchaseOrder.POStatus.COMPLETED:
+                if pvw.incoming_qty > 0:
+                    incoming_qty_before = pvw.incoming_qty
+                    pvw.incoming_qty = 0
+                    update_fields_pvw.add("incoming_qty")
+
+                    pv.total_incoming_qty = max(0, pv.total_incoming_qty - incoming_qty_before)
+                    update_fields_pv.add("total_incoming_qty")
+
+                    movements.append(
+                        {
+                            "product_variant_id": product_variant_id,
+                            "qty": incoming_qty_before,
+                            "field_change": "incoming_qty",
+                            "qty_before": incoming_qty_before,
+                            "note": item.get("note"),
+                        }
+                    )
 
             pvw.udate = timezone.now()
             pv.udate = timezone.now()
