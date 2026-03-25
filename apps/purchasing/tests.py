@@ -207,27 +207,39 @@ class PurchaseOrderServiceTest(TestCase):
         po.refresh_from_db()
         self.assertEqual(po.order_details.count(), 2)
 
-    def test_update_po_draft_remove_and_replace_details(self):
-        """Test removing existing details and replacing with new ones in DRAFT status"""
-        product2 = ProductFactory(category=self.category, company=self.company)
-        product_variant2 = ProductVariantFactory(product=product2)
+    def test_update_po_draft_replace_one_detail_with_new_product(self):
+        """Test replacing one existing detail with a new product in DRAFT status.
+
+        Scenario: PO has item A and item B. We want to replace item B with item C.
+        Result should be: item A and item C.
+        """
+        product_b = ProductFactory(category=self.category, company=self.company)
+        product_variant_b = ProductVariantFactory(product=product_b)
+
+        product_c = ProductFactory(category=self.category, company=self.company)
+        product_variant_c = ProductVariantFactory(product=product_c)
 
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
             status=PurchaseOrder.POStatus.DRAFT,
         )
-        detail1 = PurchaseOrderDetailFactory(
+        detail_a = PurchaseOrderDetailFactory(
             purchase_order=po, product_variant=self.product_variant, ordered_qty=50
         )
-        detail2 = PurchaseOrderDetailFactory(
-            purchase_order=po, product_variant=product_variant2, ordered_qty=75
+        detail_b = PurchaseOrderDetailFactory(
+            purchase_order=po, product_variant=product_variant_b, ordered_qty=75
         )
 
         data = {
             "order_details": [
                 {
-                    "product_variant_id": str(product_variant2.id),
+                    "id": str(detail_a.id),
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                },
+                {
+                    "product_variant_id": str(product_variant_c.id),
                     "ordered_qty": 100,
                 },
             ]
@@ -236,11 +248,11 @@ class PurchaseOrderServiceTest(TestCase):
         self.service.update_purchase_order(po, data)
 
         po.refresh_from_db()
-        self.assertEqual(po.order_details.count(), 1)
-        self.assertFalse(po.order_details.filter(id=detail1.id).exists())
-        self.assertFalse(po.order_details.filter(id=detail2.id).exists())
+        self.assertEqual(po.order_details.count(), 2)
+        self.assertTrue(po.order_details.filter(id=detail_a.id).exists())
+        self.assertFalse(po.order_details.filter(id=detail_b.id).exists())
         self.assertTrue(
-            po.order_details.filter(product_variant=product_variant2, ordered_qty=100).exists()
+            po.order_details.filter(product_variant=product_variant_c, ordered_qty=100).exists()
         )
 
     def test_update_po_non_draft_update_existing_detail_succeeds(self):
