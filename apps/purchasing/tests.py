@@ -208,7 +208,10 @@ class PurchaseOrderServiceTest(TestCase):
         self.assertEqual(po.order_details.count(), 2)
 
     def test_update_po_draft_remove_and_replace_details(self):
-        """Test removing some details and adding new ones in DRAFT status"""
+        """Test removing existing details and replacing with new ones in DRAFT status"""
+        product2 = ProductFactory(category=self.category, company=self.company)
+        product_variant2 = ProductVariantFactory(product=product2)
+
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
@@ -218,24 +221,14 @@ class PurchaseOrderServiceTest(TestCase):
             purchase_order=po, product_variant=self.product_variant, ordered_qty=50
         )
         detail2 = PurchaseOrderDetailFactory(
-            purchase_order=po, product_variant=self.product_variant, ordered_qty=75
-        )
-        product_variant3 = PurchaseOrderDetailFactory(
-            purchase_order=po,
-            product_variant=self.product_variant,
-            ordered_qty=200,
-            unit_price_foreign=100,
+            purchase_order=po, product_variant=product_variant2, ordered_qty=75
         )
 
         data = {
             "order_details": [
                 {
-                    "id": str(detail2.id),
+                    "product_variant_id": str(product_variant2.id),
                     "ordered_qty": 100,
-                },
-                {
-                    "id": str(product_variant3.id),
-                    "ordered_qty": 200,
                 },
             ]
         }
@@ -243,9 +236,12 @@ class PurchaseOrderServiceTest(TestCase):
         self.service.update_purchase_order(po, data)
 
         po.refresh_from_db()
-        self.assertEqual(po.order_details.count(), 2)
+        self.assertEqual(po.order_details.count(), 1)
         self.assertFalse(po.order_details.filter(id=detail1.id).exists())
-        self.assertTrue(po.order_details.filter(id=detail2.id).exists())
+        self.assertFalse(po.order_details.filter(id=detail2.id).exists())
+        self.assertTrue(
+            po.order_details.filter(product_variant=product_variant2, ordered_qty=100).exists()
+        )
 
     def test_update_po_non_draft_update_existing_detail_succeeds(self):
         """Test that updating existing detail in non-DRAFT status succeeds"""
