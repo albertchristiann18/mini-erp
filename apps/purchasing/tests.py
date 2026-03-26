@@ -15,6 +15,7 @@ from apps.inventory.factories import (
     ProductVariantFactory,
     ProductVariantWarehouseFactory,
 )
+from apps.inventory.models import ProductCogs, ProductVariantWarehouse
 from apps.purchasing.factories import (
     PurchaseOrderDetailFactory,
     PurchaseOrderFactory,
@@ -87,6 +88,284 @@ class PurchaseOrderAPITest(TestCase):
         purchase_order = PurchaseOrder.objects.last()
         self.assertTrue(purchase_order.purchase_order_number.startswith("PO-2026-"))
 
+    def test_po_full_lifecycle_to_completed(self):
+        """End-to-end test: Create PO and transition through all statuses to COMPLETED.
+        
+        Flow: DRAFT -> ORDERED -> SHIPPED -> DELIVERED -> COMPLETED
+        Tests API for creation/retrieval and service for status transitions.
+        """
+        payload = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Test Supplier",
+            "forwarder_name": "Test Forwarder",
+            "shop_services": "Test Service",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee": 1000,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                    "unit_price_foreign": 15,
+                }
+            ],
+        }
+
+        response = self.client.post("/purchase-order/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        po = PurchaseOrder.objects.last()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.DRAFT)
+
+        response = self.client.get(f"/purchase-order/{po.id}/", format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["order_details"]), 1)
+        self.assertEqual(response.data["order_details"][0]["ordered_qty"], 50)
+
+        service = PurchaseOrderService()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice.pdf",
+                    "invoice_number": "INV-001",
+                    "invoice_date": date(2026, 1, 15),
+                },
+            )
+        po.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.ORDERED)
+
+        pvw = ProductVariantWarehouse.objects.get(
+            product_variant=self.product_variant, warehouse=self.warehouse
+        )
+        self.assertEqual(pvw.incoming_qty, 50)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.SHIPPED})
+        po.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.SHIPPED)
+
+        detail = po.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_date": date(2026, 1, 20),
+                    "delivery_order_number": "DO-001",
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 50,
+                            "received_qty": 50,
+                            "received_date": "2026-01-20",
+                            "unit_price_foreign": 15,
+                            "discounted_unit_price_foreign": 15,
+                        }
+                    ],
+                },
+            )
+        po.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.DELIVERED)
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.physical_qty, 50)
+        self.assertEqual(pvw.incoming_qty, 0)
+
+        cogs_count = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        ).count()
+        self.assertEqual(cogs_count, 1)
+        cogs = ProductCogs.objects.get(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+        )
+        self.assertEqual(cogs.cogs_amount, 33000)
+        self.assertEqual(cogs.original_qty, 50)
+        self.assertEqual(cogs.remaining_qty, 50)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.COMPLETED})
+        po.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.COMPLETED)
+
+    def test_cogs_created_for_each_po_even_same_price(self):
+        """Test that COGS is created for each PO, even with same cogs_amount.
+        
+        Scenario:
+        1. PO1: Create with product, move to DELIVERED -> COGS created (cogs_amount = 33000)
+        2. PO2: Create with same product, same price, move to DELIVERED -> Another COGS created
+        3. Verify both COGS records exist with same cogs_amount but         different purchase dates and reference numbers
+        """
+        service = PurchaseOrderService()
+
+        po1_payload = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Supplier A",
+            "forwarder_name": "Forwarder A",
+            "shop_services": "Service A",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee": 1000,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                    "unit_price_foreign": 15,
+                }
+            ],
+        }
+
+        response = self.client.post("/purchase-order/", po1_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        po1 = PurchaseOrder.objects.last()
+        self.assertEqual(po1.status, PurchaseOrder.POStatus.DRAFT)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po1,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice.pdf",
+                    "invoice_number": "INV-001",
+                    "invoice_date": date(2026, 1, 15),
+                },
+            )
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(po1, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        detail1 = po1.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po1,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_date": date(2026, 1, 20),
+                    "delivery_order_number": "DO-001",
+                    "order_details": [
+                        {
+                            "id": str(detail1.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 50,
+                            "received_qty": 50,
+                            "received_date": "2026-01-20",
+                            "unit_price_foreign": 15,
+                            "discounted_unit_price_foreign": 15,
+                        }
+                    ],
+                },
+            )
+
+        po1.refresh_from_db()
+
+        cogs1 = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+        )
+        self.assertEqual(cogs1.count(), 1)
+        self.assertEqual(cogs1.first().cogs_amount, 33000)
+        po1_purchase_date = cogs1.first().purchase_date
+        po1_reference = cogs1.first().reference_number
+
+        po2_payload = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Supplier B",
+            "forwarder_name": "Forwarder B",
+            "shop_services": "Service B",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee": 1000,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                    "unit_price_foreign": 15,
+                }
+            ],
+        }
+
+        response = self.client.post("/purchase-order/", po2_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        po2 = PurchaseOrder.objects.last()
+        self.assertEqual(po2.status, PurchaseOrder.POStatus.DRAFT)
+        self.assertNotEqual(po1.id, po2.id)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice2.pdf",
+                    "invoice_number": "INV-002",
+                    "invoice_date": date(2026, 2, 15),
+                },
+            )
+
+        po2.refresh_from_db()
+        self.assertEqual(po2.invoice_date, date(2026, 2, 15))
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(po2, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        detail2 = po2.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_date": date(2026, 2, 20),
+                    "delivery_order_number": "DO-002",
+                    "order_details": [
+                        {
+                            "id": str(detail2.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 50,
+                            "received_qty": 50,
+                            "received_date": "2026-02-20",
+                            "unit_price_foreign": 15,
+                            "discounted_unit_price_foreign": 15,
+                        }
+                    ],
+                },
+            )
+
+        cogs_all = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+        )
+        self.assertEqual(cogs_all.count(), 2)
+
+        cogs_for_po1 = cogs_all.filter(reference_number=po1.purchase_order_number).first()
+        cogs_for_po2 = cogs_all.filter(reference_number=po2.purchase_order_number).first()
+        self.assertIsNotNone(cogs_for_po1)
+        self.assertIsNotNone(cogs_for_po2)
+        self.assertEqual(cogs_for_po1.cogs_amount, cogs_for_po2.cogs_amount)
+        self.assertEqual(cogs_for_po1.cogs_amount, 33000)
+        self.assertEqual(cogs_for_po2.cogs_amount, 33000)
+        self.assertEqual(cogs_for_po1.purchase_date, date(2026, 1, 15))
+        self.assertEqual(cogs_for_po2.purchase_date, date(2026, 2, 15))
+
 
 class PurchaseOrderServiceTest(TestCase):
     """Unit tests for PurchaseOrderService"""
@@ -98,6 +377,295 @@ class PurchaseOrderServiceTest(TestCase):
         self.product = ProductFactory(category=self.category, company=self.company)
         self.product_variant = ProductVariantFactory(product=self.product)
         self.service = PurchaseOrderService()
+
+    def test_multiple_po_same_product_incoming_tracking(self):
+        """Test that incoming_qty is tracked correctly when multiple POs exist for same product.
+
+        Scenario:
+        1. PO1: ordered 20 -> status ORDERED (incoming = 20)
+        2. PO2: ordered 15 -> status ORDERED (incoming = 35 total, 20 from PO1 + 15 from PO2)
+        3. PO2: status DELIVERED with received=10 (incoming = 25, physical = 10)
+        4. PO2: status COMPLETED (incoming = 20 from PO1, physical = 10)
+        """
+        po1_data = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Test Supplier",
+            "forwarder_name": "Test Forwarder",
+            "shop_services": "Test Service",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee_per_cbm": 100,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 20,
+                    "unit_price_foreign": 10,
+                }
+            ],
+        }
+
+        po1 = self.service.create_purchase_order(po1_data)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po1,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice.pdf",
+                    "invoice_number": "INV-001",
+                    "invoice_date": date.today(),
+                },
+            )
+
+        self.assertEqual(po1.status, PurchaseOrder.POStatus.ORDERED)
+
+        pvw = ProductVariantWarehouse.objects.get(product_variant=self.product_variant, warehouse=self.warehouse)
+        self.assertEqual(pvw.incoming_qty, 20)
+        self.assertEqual(pvw.physical_qty, 0)
+
+        po2_data = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Test Supplier 2",
+            "forwarder_name": "Test Forwarder",
+            "shop_services": "Test Service",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee_per_cbm": 100,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 15,
+                    "unit_price_foreign": 10,
+                }
+            ],
+        }
+
+        po2 = self.service.create_purchase_order(po2_data)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice2.pdf",
+                    "invoice_number": "INV-002",
+                    "invoice_date": date.today(),
+                },
+            )
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.incoming_qty, 35)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.SHIPPED,
+                    "delivery_order_number": "DO-002",
+                },
+            )
+
+        detail = po2.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_order_invoice_file": "doi.pdf",
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 15,
+                            "received_qty": 10,
+                            "received_date": str(date.today() + timedelta(days=1)),
+                        }
+                    ],
+                },
+            )
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.incoming_qty, 25)
+        self.assertEqual(pvw.physical_qty, 10)
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {"status": PurchaseOrder.POStatus.COMPLETED},
+            )
+
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.incoming_qty, 20)
+        self.assertEqual(pvw.physical_qty, 10)
+
+    def test_cogs_created_for_each_po_even_same_price(self):
+        """Test that COGS is created for each PO, even with same cogs_amount.
+
+        Scenario:
+        1. PO1: Create with product, move to DELIVERED -> COGS created (cogs_amount = 33000)
+        2. PO2: Create with same product, same price, move to DELIVERED -> Another COGS created
+        3. Verify both COGS records exist with same cogs_amount but different purchase dates and reference numbers
+        """
+        po1_payload = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Supplier A",
+            "forwarder_name": "Forwarder A",
+            "shop_services": "Service A",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee": 1000,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                    "unit_price_foreign": 15,
+                }
+            ],
+        }
+
+        po1 = self.service.create_purchase_order(po1_payload)
+        po1.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po1,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice.pdf",
+                    "invoice_number": "INV-001",
+                    "invoice_date": date(2026, 1, 15),
+                },
+            )
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(po1, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        detail1 = po1.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po1,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_date": date(2026, 1, 20),
+                    "delivery_order_number": "DO-001",
+                    "order_details": [
+                        {
+                            "id": str(detail1.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 50,
+                            "received_qty": 50,
+                            "received_date": "2026-01-20",
+                            "unit_price_foreign": 15,
+                            "discounted_unit_price_foreign": 15,
+                        }
+                    ],
+                },
+            )
+
+        po1.refresh_from_db()
+
+        cogs1 = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+        )
+        self.assertEqual(cogs1.count(), 1)
+        self.assertEqual(cogs1.first().cogs_amount, 33000)
+        po1_purchase_date = cogs1.first().purchase_date
+        po1_reference = cogs1.first().reference_number
+
+        po2_payload = {
+            "warehouse_id": str(self.warehouse.id),
+            "company_id": str(self.company.id),
+            "supplier_name": "Supplier B",
+            "forwarder_name": "Forwarder B",
+            "shop_services": "Service B",
+            "commission_fee_pct": 10,
+            "delivery_fee": 100,
+            "currency": "RMB",
+            "exchange_rate": 2200,
+            "cbm": 1,
+            "weight": 10,
+            "shipping_fee": 1000,
+            "order_details": [
+                {
+                    "product_variant_id": str(self.product_variant.id),
+                    "ordered_qty": 50,
+                    "unit_price_foreign": 15,
+                }
+            ],
+        }
+
+        po2 = self.service.create_purchase_order(po2_payload)
+        po2.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.ORDERED,
+                    "purchase_order_invoice_file": "invoice2.pdf",
+                    "invoice_number": "INV-002",
+                    "invoice_date": date(2026, 2, 15),
+                },
+            )
+
+        po2.refresh_from_db()
+
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(po2, {"status": PurchaseOrder.POStatus.SHIPPED})
+
+        detail2 = po2.order_details.first()
+        with patch("apps.purchasing.serializers.compress_pdf_file"):
+            self.service.update_purchase_order(
+                po2,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "delivery_date": date(2026, 2, 20),
+                    "delivery_order_number": "DO-002",
+                    "order_details": [
+                        {
+                            "id": str(detail2.id),
+                            "product_variant_id": str(self.product_variant.id),
+                            "ordered_qty": 50,
+                            "received_qty": 50,
+                            "received_date": "2026-02-20",
+                            "unit_price_foreign": 15,
+                            "discounted_unit_price_foreign": 15,
+                        }
+                    ],
+                },
+            )
+
+        cogs_all = ProductCogs.objects.filter(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+        )
+        self.assertEqual(cogs_all.count(), 2)
+
+        cogs_for_po1 = cogs_all.filter(reference_number=po1.purchase_order_number).first()
+        cogs_for_po2 = cogs_all.filter(reference_number=po2.purchase_order_number).first()
+        self.assertIsNotNone(cogs_for_po1)
+        self.assertIsNotNone(cogs_for_po2)
+        self.assertEqual(cogs_for_po1.cogs_amount, cogs_for_po2.cogs_amount)
+        self.assertEqual(cogs_for_po1.cogs_amount, 33000)
+        self.assertEqual(cogs_for_po2.cogs_amount, 33000)
+        self.assertEqual(cogs_for_po1.purchase_date, date(2026, 1, 15))
+        self.assertEqual(cogs_for_po2.purchase_date, date(2026, 2, 15))
 
     def test_decrease_received_qty_fails_when_physical_qty_insufficient(self):
         """Test that decreasing received_qty fails when physical qty already sold."""

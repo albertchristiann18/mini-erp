@@ -225,6 +225,18 @@ class PurchaseOrderService:
                     }
                 )
 
+        elif new_status == PurchaseOrder.POStatus.COMPLETED:
+            for detail in po.order_details.all():
+                inventory_data.append(
+                    {
+                        "product_variant_id": detail.product_variant.id,
+                        "ordered_qty": detail.ordered_qty,
+                        "received_qty": detail.received_qty or 0,
+                        "updated_qty": detail.received_qty or 0,
+                        "note": f"Stock movement for PO {po.purchase_order_number} completed",
+                    }
+                )
+
         if inventory_data:
             inventory_service = InventoryService()
             status_for_inventory: str = new_status  # type: ignore[assignment]

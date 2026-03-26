@@ -257,13 +257,15 @@ class InventoryService:
 
             elif new_status == PurchaseOrder.POStatus.DELIVERED:
                 if already_processed == 0:
-                    remaining_qty = max(0, ordered_qty - received_qty)
-                    pvw.incoming_qty = remaining_qty
+                    pvw.incoming_qty = max(0, pvw.incoming_qty - received_qty)
                     pvw.physical_qty += received_qty
                     if not created_pvw:
                         update_fields_pvw.update(["incoming_qty", "physical_qty"])
 
-                    pv.total_incoming_qty = remaining_qty
+                    if pv.total_incoming_qty is None or pv.total_incoming_qty == 0:
+                        pv.total_incoming_qty = max(0, pvw.incoming_qty)
+                    else:
+                        pv.total_incoming_qty = max(0, pv.total_incoming_qty - received_qty)
                     pv.total_available_qty += received_qty
                     update_fields_pv.update(["total_incoming_qty", "total_available_qty"])
 
@@ -310,6 +312,26 @@ class InventoryService:
 
                             pv.total_incoming_qty += incoming_adjustment
                             update_fields_pv.add("total_incoming_qty")
+
+            elif new_status == PurchaseOrder.POStatus.COMPLETED:
+                remaining_qty = (item.get("ordered_qty") or 0) - (item.get("received_qty") or 0)
+                if remaining_qty > 0 and pvw.incoming_qty > 0:
+                    incoming_qty_before = pvw.incoming_qty
+                    pvw.incoming_qty = max(0, pvw.incoming_qty - remaining_qty)
+                    update_fields_pvw.add("incoming_qty")
+
+                    pv.total_incoming_qty = max(0, pv.total_incoming_qty - remaining_qty)
+                    update_fields_pv.add("total_incoming_qty")
+
+                    movements.append(
+                        {
+                            "product_variant_id": product_variant_id,
+                            "qty": remaining_qty,
+                            "field_change": "incoming_qty",
+                            "qty_before": incoming_qty_before,
+                            "note": item.get("note"),
+                        }
+                    )
 
             pvw.udate = timezone.now()
             pv.udate = timezone.now()
