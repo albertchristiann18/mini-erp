@@ -71,6 +71,19 @@ class PurchaseOrderService:
 
         order_details = data.get("order_details", [])
 
+        if new_status not in [PurchaseOrder.POStatus.CANCELLED]:
+            for detail_data in order_details:
+                ordered_qty = detail_data.get("ordered_qty")
+                if ordered_qty is not None and ordered_qty < 0:
+                    raise ValidationError(
+                        {"order_details": f"ordered_qty cannot be negative. Value: {ordered_qty}"}
+                    )
+                received_qty = detail_data.get("received_qty")
+                if received_qty is not None and received_qty < 0:
+                    raise ValidationError(
+                        {"order_details": f"received_qty cannot be negative. Value: {received_qty}"}
+                    )
+
         existing_details_map = {str(d.id): d for d in po.order_details.all()}
 
         if old_status not in [PurchaseOrder.POStatus.DRAFT, PurchaseOrder.POStatus.ORDERED]:
@@ -179,6 +192,14 @@ class PurchaseOrderService:
         if new_status == PurchaseOrder.POStatus.DELIVERED and not data.get("delivery_date"):
             data["delivery_date"] = timezone.now()
 
+        if new_status == PurchaseOrder.POStatus.CANCELLED:
+            if old_status != PurchaseOrder.POStatus.DRAFT:
+                raise ValidationError(
+                    {
+                        "status": f"Cannot cancel PO. Only PO in DRAFT status can be cancelled. Current status: {old_status}"
+                    }
+                )
+
         inventory_data = []
         if new_status == PurchaseOrder.POStatus.ORDERED:
             for detail in po.order_details.all():
@@ -253,6 +274,14 @@ class PurchaseOrderService:
 
         details_data = data.pop("order_details", None)
 
+        original_received_qtys = {}
+        if details_data is not None and old_status == PurchaseOrder.POStatus.DELIVERED:
+            existing_details_map = {str(d.id): d for d in po.order_details.all()}
+            for detail_data in details_data:
+                if detail_id := detail_data.get("id"):
+                    if existing_detail := existing_details_map.get(detail_id):
+                        original_received_qtys[detail_id] = existing_detail.received_qty or 0
+
         updated_fields = ["udate"]
         for attr, value in data.items():
             if attr != "id":
@@ -264,6 +293,66 @@ class PurchaseOrderService:
             self._update_order_details(po, details_data, old_status, new_status or old_status)
 
         self._recalculate_po_totals(po)
+
+        incremental_order_details = order_details if order_details and new_status is None else None
+
+        if (
+            old_status == PurchaseOrder.POStatus.DELIVERED
+            and new_status is None
+            and incremental_order_details
+        ):
+            existing_details_map = {str(d.id): d for d in po.order_details.all()}
+
+            inventory_data = []
+            for item in incremental_order_details:
+                receive_date_str = item.get("received_date")
+                received_qty = item.get("received_qty", 0)
+                ordered_qty = item.get("ordered_qty", 0)
+                product_variant_id = item.get("product_variant_id")
+                if not product_variant_id:
+                    continue
+                if not receive_date_str:
+                    continue
+
+                qty_is_zero = received_qty == 0
+                if qty_is_zero:
+                    continue
+
+                detail_id = item.get("id")
+                original_received_qty = original_received_qtys.get(detail_id, 0)
+                new_received_qty = item.get("received_qty", 0)
+                if new_received_qty > original_received_qty:
+                    received_qty = new_received_qty - original_received_qty
+                    updated_qty = 0
+                else:
+                    continue
+
+                inventory_data.append(
+                    {
+                        "product_variant_id": product_variant_id,
+                        "ordered_qty": ordered_qty,
+                        "received_qty": received_qty,
+                        "updated_qty": updated_qty,
+                        "unit_price_base": item.get("unit_price_base"),
+                        "unit_price_foreign": item.get("unit_price_foreign"),
+                        "discounted_unit_price_foreign": item.get("discounted_unit_price_foreign"),
+                        "exchange_rate": po.exchange_rate,
+                        "note": f"Stock movement for PO {po.purchase_order_number} inbound",
+                    }
+                )
+
+            if inventory_data:
+                inventory_service = InventoryService()
+                inventory_service.update_stock_on_po(
+                    po=po,
+                    new_status=PurchaseOrder.POStatus.DELIVERED,
+                    data=inventory_data,
+                )
+                inventory_service.update_cogs_on_po(
+                    po=po,
+                    new_status=PurchaseOrder.POStatus.DELIVERED,
+                    data=inventory_data,
+                )
 
         return po
 

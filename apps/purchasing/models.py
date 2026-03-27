@@ -21,6 +21,7 @@ class PurchaseOrder(DefaultModel):
         SHIPPED = "SHIPPED", "In Transit"
         DELIVERED = "DELIVERED", "Delivered at Warehouse"
         COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     id = ULIDField(
         primary_key=True, default=generate_ulid, editable=False, db_column="purchase_order_id"
