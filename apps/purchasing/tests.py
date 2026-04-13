@@ -90,7 +90,7 @@ class PurchaseOrderAPITest(TestCase):
 
     def test_po_full_lifecycle_to_completed(self):
         """End-to-end test: Create PO and transition through all statuses to COMPLETED.
-        
+
         Flow: DRAFT -> ORDERED -> SHIPPED -> DELIVERED -> COMPLETED
         Tests API for creation/retrieval and service for status transitions.
         """
@@ -201,7 +201,7 @@ class PurchaseOrderAPITest(TestCase):
 
     def test_cogs_created_for_each_po_even_same_price(self):
         """Test that COGS is created for each PO, even with same cogs_amount.
-        
+
         Scenario:
         1. PO1: Create with product, move to DELIVERED -> COGS created (cogs_amount = 33000)
         2. PO2: Create with same product, same price, move to DELIVERED -> Another COGS created
@@ -280,8 +280,6 @@ class PurchaseOrderAPITest(TestCase):
         )
         self.assertEqual(cogs1.count(), 1)
         self.assertEqual(cogs1.first().cogs_amount, 33000)
-        po1_purchase_date = cogs1.first().purchase_date
-        po1_reference = cogs1.first().reference_number
 
         po2_payload = {
             "warehouse_id": str(self.warehouse.id),
@@ -424,7 +422,9 @@ class PurchaseOrderServiceTest(TestCase):
 
         self.assertEqual(po1.status, PurchaseOrder.POStatus.ORDERED)
 
-        pvw = ProductVariantWarehouse.objects.get(product_variant=self.product_variant, warehouse=self.warehouse)
+        pvw = ProductVariantWarehouse.objects.get(
+            product_variant=self.product_variant, warehouse=self.warehouse
+        )
         self.assertEqual(pvw.incoming_qty, 20)
         self.assertEqual(pvw.physical_qty, 0)
 
@@ -585,8 +585,6 @@ class PurchaseOrderServiceTest(TestCase):
         )
         self.assertEqual(cogs1.count(), 1)
         self.assertEqual(cogs1.first().cogs_amount, 33000)
-        po1_purchase_date = cogs1.first().purchase_date
-        po1_reference = cogs1.first().reference_number
 
         po2_payload = {
             "warehouse_id": str(self.warehouse.id),
