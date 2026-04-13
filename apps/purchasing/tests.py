@@ -94,6 +94,7 @@ class PurchaseOrderAPITest(TestCase):
         Flow: DRAFT -> ORDERED -> SHIPPED -> DELIVERED -> COMPLETED
         Tests API for creation/retrieval and service for status transitions.
         """
+        print("test")
         payload = {
             "warehouse_id": str(self.warehouse.id),
             "company_id": str(self.company.id),
