@@ -32,6 +32,10 @@ env = environ.Env(
     DB_PASSWORD=(str, ""),
     DB_HOST=(str, ""),
     DB_PORT=(str, ""),
+    AWS_ACCESS_KEY_ID=(str, ""),
+    AWS_SECRET_ACCESS_KEY=(str, ""),
+    AWS_STORAGE_BUCKET_NAME=(str, ""),
+    AWS_S3_ENDPOINT_URL=(str, ""),
 )
 
 environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
@@ -54,6 +58,7 @@ INSTALLED_APPS = [
     "apps.inventory",
     "apps.purchasing",
     "core",
+    "storages",
 ]
 
 MIDDLEWARE = [
@@ -153,3 +158,31 @@ if not DEBUG:  # Production mode
     SESSION_COOKIE_SECURE = True  # Cookies only over HTTPS
     CSRF_COOKIE_SECURE = True  # CSRF tokens only over HTTPS
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+
+# --- Cloudflare R2 Configuration ---
+AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY")
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME")
+
+# The endpoint is your Account URL (WITHOUT the bucket name at the end)
+# Format: https://<account_id>.r2.cloudflarestorage.com
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL")
+
+# Protocol settings
+AWS_S3_SIGNATURE_VERSION = "s3v4"
+AWS_S3_REGION_NAME = "auto"  # R2 doesn't strictly use regions like AWS, but 'auto' is safe
+
+# This ensures files are private by default (Signed URLs for invoices)
+AWS_DEFAULT_ACL = None
+AWS_QUERYSTRING_AUTH = True  # Set to True to generate temporary "signed" links for invoices
+
+# Tell Django to use S3/R2 for FileFields
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3.S3Storage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}

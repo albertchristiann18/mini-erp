@@ -170,25 +170,64 @@ class ProductVariantWarehouse(DefaultModel):
 
 
 class ProductCogs(DefaultModel):
-    """FIFO inventory layers per variant per warehouse"""
+    """FIFO inventory layers per variant per warehouse.
+
+    This model tracks the cost of goods sold (COGS) for inventory items using FIFO method.
+
+    Fields:
+    - reference_number: Identifier for the source document (e.g., PO purchase_order_number)
+    - purchase_date: Date from PurchaseOrder.invoice_date
+    - price_rmb: Unit price in RMB from PO detail (unit_price_foreign)
+    - exchange_rate: Exchange rate from PO (PurchaseOrder.exchange_rate)
+    - cogs_amount: Unit price in IDR = price_rmb * exchange_rate
+    - allocated_shipping_fee: Shipping fee allocated per unit based on volume (RMB -> IDR)
+    - allocated_delivery_fee: Delivery fee allocated per unit (RMB -> IDR)
+    - original_qty: Total quantity that came in from the PO (accumulates with each delivery update).
+    - remaining_qty: Current available quantity for sales/consumption.
+                    This ONLY decreases when there are actual outbound/sales transactions.
+    """
 
     id = ULIDField(
         primary_key=True, default=generate_ulid, editable=False, db_column="product_cogs_id"
     )
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.CASCADE)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.CASCADE)
+    reference_number = models.CharField(
+        max_length=100,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Source document reference (e.g., PO purchase_order_number)",
+    )
 
-    purchase_date = models.DateField()
-    price_rmb = models.BigIntegerField()
-    exchange_rate = models.DecimalField(max_digits=15, decimal_places=4)
-    cogs_amount = models.BigIntegerField()  # In IDR
+    purchase_date = models.DateField(help_text="Date from PurchaseOrder.invoice_date")
+    price_rmb = models.DecimalField(
+        max_digits=15, decimal_places=4, help_text="Unit price in RMB (unit_price_foreign)"
+    )
+    exchange_rate = models.BigIntegerField(help_text="Exchange rate from PO (rounded integer)")
+    cogs_amount = models.BigIntegerField(help_text="Unit price in IDR = price_rmb * exchange_rate")
+    allocated_shipping_fee = models.BigIntegerField(
+        default=0, help_text="Shipping fee allocated per unit (IDR)"
+    )
+    allocated_delivery_fee = models.BigIntegerField(
+        default=0, help_text="Delivery fee allocated per unit (IDR)"
+    )
 
-    original_qty = models.IntegerField(default=0)
-    remaining_qty = models.IntegerField(default=0)
+    original_qty = models.IntegerField(
+        default=0,
+        help_text="Total quantity that came in from PO (accumulates with each delivery)",
+    )
+    remaining_qty = models.IntegerField(
+        default=0,
+        help_text="Current available quantity. Only decreases on actual sales/outbound.",
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["-purchase_date"]
+        indexes = [
+            models.Index(fields=["product_variant", "warehouse", "reference_number"]),
+        ]
 
 
 class ProductVariantMarketplace(DefaultModel):
@@ -232,6 +271,7 @@ class StockMovement(DefaultModel):
     product_variant = models.ForeignKey(ProductVariant, on_delete=models.PROTECT)
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     movement_type = models.CharField(max_length=3, choices=MovementType.choices)
+    field_change = models.CharField(max_length=100, default="")  # what field is changed
     quantity = models.IntegerField()  # Use positive for IN, negative for OUT
     reference_number = models.CharField(max_length=100, blank=True, null=True)  # PO# or Order ID
     note = models.TextField(blank=True, null=True)
