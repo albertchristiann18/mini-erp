@@ -89,6 +89,7 @@ jobs:
       - name: Run tests
         run: uv run pytest
         env:
+          SECRET_KEY: ci-test-secret-key-do-not-use-in-production
           DB_NAME: postgres
           DB_USER: postgres
           DB_PASSWORD: password
