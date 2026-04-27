@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from apps.shopee.models import ShopeeShop, ShopeeSyncLog, ShopeeWebhookLog
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeSyncLog, ShopeeWebhookLog
 
 
 @admin.register(ShopeeShop)

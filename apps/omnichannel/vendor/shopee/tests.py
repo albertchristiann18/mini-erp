@@ -13,9 +13,9 @@ from apps.inventory.factories import (
     ProductVariantWarehouseFactory,
 )
 from apps.sales.models import SalesOrder
-from apps.shopee.factories import ShopeeShopFactory, ShopeeWebhookLogFactory
-from apps.shopee.models import ShopeeShop, ShopeeWebhookLog
-from apps.shopee.utils import sign_shop_api
+from apps.omnichannel.vendor.shopee.factories import ShopeeShopFactory, ShopeeWebhookLogFactory
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog
+from apps.omnichannel.vendor.shopee.utils import sign_shop_api
 from core.factories import CompanyFactory, MarketplaceFactory, WarehouseFactory
 
 
@@ -84,7 +84,7 @@ class ShopeeOrderSyncTest(TestCase):
             default_warehouse=self.warehouse,
         )
 
-    @patch("apps.shopee.order_sync.ShopeeClient")
+    @patch("apps.omnichannel.vendor.shopee.order_sync.ShopeeClient")
     def test_order_upsert_creates_sales_order(self, MockClient):
         sku = self.variant.sku_variant_code
         mock_client = MockClient.return_value
@@ -118,7 +118,7 @@ class ShopeeOrderSyncTest(TestCase):
             ]
         }
 
-        from apps.shopee.order_sync import ShopeeOrderSyncer
+        from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
 
         syncer = ShopeeOrderSyncer(self.shop)
         so = syncer.sync_order_by_sn("SH_ORDER_001")
@@ -131,7 +131,7 @@ class ShopeeOrderSyncTest(TestCase):
         self.assertEqual(item.quantity, 2)
         self.assertEqual(item.selling_price, 100000)
 
-    @patch("apps.shopee.order_sync.ShopeeClient")
+    @patch("apps.omnichannel.vendor.shopee.order_sync.ShopeeClient")
     def test_order_upsert_skips_duplicate(self, MockClient):
         sku = self.variant.sku_variant_code
         mock_client = MockClient.return_value
@@ -164,7 +164,7 @@ class ShopeeOrderSyncTest(TestCase):
             ]
         }
 
-        from apps.shopee.order_sync import ShopeeOrderSyncer
+        from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
 
         syncer = ShopeeOrderSyncer(self.shop)
         so1 = syncer.sync_order_by_sn("SH_ORDER_DUP")

@@ -1,8 +1,8 @@
 import logging
 
 from apps.inventory.models import ProductVariant, ProductVariantMarketplace, ProductVariantWarehouse
-from apps.shopee.client import ShopeeClient, ShopeeAPIError
-from apps.shopee.models import ShopeeShop
+from apps.omnichannel.vendor.shopee.client import ShopeeClient, ShopeeAPIError
+from apps.omnichannel.vendor.shopee.models import ShopeeShop
 
 logger = logging.getLogger(__name__)
 

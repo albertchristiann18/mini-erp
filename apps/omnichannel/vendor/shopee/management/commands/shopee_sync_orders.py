@@ -4,9 +4,9 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.shopee.client import ShopeeAPIError
-from apps.shopee.models import ShopeeShop, ShopeeSyncLog
-from apps.shopee.order_sync import ShopeeOrderSyncer
+from apps.omnichannel.vendor.shopee.client import ShopeeAPIError
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeSyncLog
+from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
 
 logger = logging.getLogger(__name__)
 

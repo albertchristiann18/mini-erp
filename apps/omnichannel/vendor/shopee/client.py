@@ -5,8 +5,8 @@ from typing import Any, Dict, Optional
 import requests
 from django.utils import timezone
 
-from apps.shopee.models import ShopeeShop
-from apps.shopee.utils import get_timestamp, sign_public_api, sign_shop_api
+from apps.omnichannel.vendor.shopee.models import ShopeeShop
+from apps.omnichannel.vendor.shopee.utils import get_timestamp, sign_public_api, sign_shop_api
 
 logger = logging.getLogger(__name__)
 

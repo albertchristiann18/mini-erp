@@ -1,8 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.shopee.models import ShopeeShop, ShopeeSyncLog
-from apps.shopee.stock_sync import ShopeeStockSyncer
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeSyncLog
+from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
 
 
 class Command(BaseCommand):

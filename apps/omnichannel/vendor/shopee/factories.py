@@ -1,6 +1,6 @@
 import factory
 
-from apps.shopee.models import ShopeeShop, ShopeeWebhookLog
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog
 from core.factories import CompanyFactory
 
 

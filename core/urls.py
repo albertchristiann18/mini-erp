@@ -51,7 +51,8 @@ urlpatterns = [
     path("", include("apps.purchasing.urls")),
     path("", include("apps.sales.urls")),
     path("", include("apps.finance.urls")),
-    path("", include("apps.shopee.urls")),
+    path("", include("apps.omnichannel.vendor.shopee.urls")),
+    path("", include("apps.omnichannel.vendor.tiktok.urls")),
 ]
 
 router = DefaultRouter()

@@ -11,13 +11,13 @@ from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from apps.shopee.models import ShopeeShop, ShopeeSyncLog, ShopeeWebhookLog
-from apps.shopee.serializers import (
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeSyncLog, ShopeeWebhookLog
+from apps.omnichannel.vendor.shopee.serializers import (
     ShopeeShopSerializer,
     ShopeeSyncLogSerializer,
     ShopeeWebhookLogSerializer,
 )
-from apps.shopee.webhook_handler import WebhookProcessor
+from apps.omnichannel.vendor.shopee.webhook_handler import WebhookProcessor
 from core.permissions import IsStaffOrReadOnly
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="refresh-token")
     def refresh_token(self, request: Request, pk=None) -> Response:
         shop = self.get_object()
-        from apps.shopee.client import ShopeeAPIError, ShopeeClient
+        from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
 
         try:
             client = ShopeeClient(shop)
@@ -88,7 +88,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="sync-orders")
     def sync_orders(self, request: Request, pk=None) -> Response:
         shop = self.get_object()
-        from apps.shopee.management.commands.shopee_sync_orders import sync_orders_for_shop
+        from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_orders import sync_orders_for_shop
 
         try:
             count = sync_orders_for_shop(shop)
@@ -101,7 +101,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="sync-stock")
     def sync_stock(self, request: Request, pk=None) -> Response:
         shop = self.get_object()
-        from apps.shopee.stock_sync import ShopeeStockSyncer
+        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
 
         try:
             syncer = ShopeeStockSyncer(shop)
