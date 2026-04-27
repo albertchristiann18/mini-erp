@@ -27,6 +27,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("apps.inventory.urls")),
     path("", include("apps.purchasing.urls")),
+    path("", include("apps.sales.urls")),
+    path("", include("apps.finance.urls")),
 ]
 
 router = DefaultRouter()
