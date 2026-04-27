@@ -1,0 +1,135 @@
+import hashlib
+import hmac
+import json
+import logging
+
+from django.http import HttpRequest, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from apps.shopee.models import ShopeeShop, ShopeeSyncLog, ShopeeWebhookLog
+from apps.shopee.serializers import (
+    ShopeeShopSerializer,
+    ShopeeSyncLogSerializer,
+    ShopeeWebhookLogSerializer,
+)
+from apps.shopee.webhook_handler import WebhookProcessor
+from core.permissions import IsStaffOrReadOnly
+
+logger = logging.getLogger(__name__)
+
+
+@csrf_exempt
+@require_POST
+def shopee_webhook(request: HttpRequest) -> JsonResponse:
+    """
+    Receive Shopee webhook events.
+    URL: POST /shopee/webhook/
+    """
+    raw_body = request.body
+
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid json"}, status=400)
+
+    shop_id = payload.get("shop_id") or payload.get("shopid")
+    event_code = payload.get("code", 0)
+
+    shopee_signature = request.headers.get("Authorization", "")
+
+    log = ShopeeWebhookLog.objects.create(
+        shop_id=shop_id or 0,
+        event_code=event_code,
+        payload=payload,
+        signature=shopee_signature,
+        processed=False,
+    )
+
+    # Verify signature if we have the shop
+    if shop_id:
+        try:
+            shop = ShopeeShop.objects.get(shop_id=shop_id, is_active=True)
+            expected = hmac.new(
+                shop.partner_key.encode(), raw_body, hashlib.sha256
+            ).hexdigest()
+            if shopee_signature and not hmac.compare_digest(expected, shopee_signature):
+                logger.warning(f"Webhook signature mismatch for shop {shop_id}")
+        except ShopeeShop.DoesNotExist:
+            logger.warning(f"Webhook received for unknown shop_id={shop_id}")
+
+    processor = WebhookProcessor()
+    processor.process(log)
+
+    return JsonResponse({"message": "ok"})
+
+
+class ShopeeShopViewSet(viewsets.ModelViewSet):
+    queryset = ShopeeShop.objects.all()
+    serializer_class = ShopeeShopSerializer
+    permission_classes = [IsStaffOrReadOnly]
+
+    @action(detail=True, methods=["post"], url_path="refresh-token")
+    def refresh_token(self, request: Request, pk=None) -> Response:
+        shop = self.get_object()
+        from apps.shopee.client import ShopeeAPIError, ShopeeClient
+
+        try:
+            client = ShopeeClient(shop)
+            client.refresh_access_token()
+            return Response({"message": "Token refreshed"})
+        except ShopeeAPIError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="sync-orders")
+    def sync_orders(self, request: Request, pk=None) -> Response:
+        shop = self.get_object()
+        from apps.shopee.management.commands.shopee_sync_orders import sync_orders_for_shop
+
+        try:
+            count = sync_orders_for_shop(shop)
+            return Response({"synced": count})
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=["post"], url_path="sync-stock")
+    def sync_stock(self, request: Request, pk=None) -> Response:
+        shop = self.get_object()
+        from apps.shopee.stock_sync import ShopeeStockSyncer
+
+        try:
+            syncer = ShopeeStockSyncer(shop)
+            count = syncer.push_stock_to_shopee()
+            return Response({"updated": count})
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ShopeeWebhookLog.objects.all().order_by("-cdate")
+    serializer_class = ShopeeWebhookLogSerializer
+    permission_classes = [IsStaffOrReadOnly]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        shop_id = self.request.query_params.get("shop_id")
+        processed = self.request.query_params.get("processed")
+        if shop_id:
+            qs = qs.filter(shop_id=shop_id)
+        if processed is not None:
+            qs = qs.filter(processed=processed.lower() == "true")
+        return qs
+
+
+class ShopeeSyncLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ShopeeSyncLog.objects.all().order_by("-started_at")
+    serializer_class = ShopeeSyncLogSerializer
+    permission_classes = [IsStaffOrReadOnly]

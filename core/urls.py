@@ -51,6 +51,7 @@ urlpatterns = [
     path("", include("apps.purchasing.urls")),
     path("", include("apps.sales.urls")),
     path("", include("apps.finance.urls")),
+    path("", include("apps.shopee.urls")),
 ]
 
 router = DefaultRouter()

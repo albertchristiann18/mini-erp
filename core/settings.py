@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "apps.purchasing",
     "apps.sales",
     "apps.finance",
+    "apps.shopee",
     "core",
     "storages",
 ]
