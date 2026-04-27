@@ -56,8 +56,8 @@ class PurchaseOrderAPITest(TestCase):
         response = self.client.get("/purchase-order/", format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["id"], str(po1.id))
+        self.assertGreaterEqual(len(response.data["results"]), 2)
+        self.assertEqual(response.data["results"][0]["id"], str(po1.id))
 
     def test_create_po(self):
         """Create a PO"""

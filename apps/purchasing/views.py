@@ -2,6 +2,7 @@ from typing import Any, Type
 
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
@@ -14,6 +15,8 @@ from apps.purchasing.serializers import (
     PurchaseOrderUpdateSerializer,
 )
 from apps.purchasing.services import purchasing_service
+from apps.purchasing.services.purchasing_service import PurchaseOrderService
+from core.permissions import IsStaffOrReadOnly
 
 
 class PurchaseOrderViewSet(viewsets.ModelViewSet):
@@ -27,6 +30,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
     queryset = PurchaseOrder.objects.all()
     http_method_names = ["get", "post", "put", "patch"]
+    permission_classes = [IsStaffOrReadOnly]
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
@@ -38,9 +42,20 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         else:  # retrieve
             return PurchaseOrderReadSerializer
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """Get list of all Purchase Orders (basic info without details)"""
         queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -77,5 +92,17 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
             return Response(status=status.HTTP_200_OK)
 
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"])
+    def advance_status(self, request: Request, pk=None) -> Response:
+        """POST /purchase-order/{id}/advance_status/ with body {"status": "ORDERED"}"""
+        po = self.get_object()
+        new_status = request.data.get("status")
+        try:
+            service = PurchaseOrderService()
+            po = service.update_purchase_order(po, {"status": new_status})
+            return Response(PurchaseOrderReadSerializer(po).data, status=status.HTTP_200_OK)
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

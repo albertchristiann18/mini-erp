@@ -17,11 +17,13 @@ from apps.sales.serializers import (
     SalesReturnSerializer,
 )
 from apps.sales.services.sales_service import SalesOrderService, SalesReturnService
+from core.permissions import IsStaffOrReadOnly
 
 
 class SalesOrderViewSet(viewsets.ModelViewSet):
     queryset = SalesOrder.objects.all()
     http_method_names = ["get", "post", "patch"]
+    permission_classes = [IsStaffOrReadOnly]
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
@@ -33,8 +35,19 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         else:
             return SalesOrderDetailSerializer
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -89,6 +102,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
 class SalesReturnViewSet(viewsets.ModelViewSet):
     queryset = SalesReturn.objects.all()
     http_method_names = ["get", "post", "patch"]
+    permission_classes = [IsStaffOrReadOnly]
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
@@ -97,6 +111,10 @@ class SalesReturnViewSet(viewsets.ModelViewSet):
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = SalesReturnSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = SalesReturnSerializer(queryset, many=True)
         return Response(serializer.data)
 

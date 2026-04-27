@@ -305,7 +305,7 @@ class AccountsPayableAPITest(APITestCase):
         AccountsPayableFactory(company=self.company)
         response = self.client.get("/accounts-payable/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        self.assertEqual(len(response.data["results"]), 2)
 
     def test_get_single_accounts_payable(self):
         ap = AccountsPayableFactory(company=self.company, total_amount=1000000)
@@ -366,7 +366,7 @@ class AccountsReceivableAPITest(APITestCase):
         AccountsReceivableFactory(company=self.company)
         response = self.client.get("/accounts-receivable/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(response.data["results"]), 1)
 
     def test_settle_receivable(self):
         ar = AccountsReceivableFactory(company=self.company, expected_amount=500000)

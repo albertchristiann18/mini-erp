@@ -13,15 +13,18 @@ from apps.inventory.serializers import (
     WarehouseSerializer,
 )
 from apps.inventory.services import product_service
+from core.permissions import IsStaffOrReadOnly
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.filter(is_active=True).all()
     serializer_class = CategorySerializer
+    permission_classes = [IsStaffOrReadOnly]
 
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(is_active=True).all()
+    permission_classes = [IsStaffOrReadOnly]
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
@@ -43,3 +46,4 @@ class ProductViewSet(viewsets.ModelViewSet):
 class WarehouseViewSet(viewsets.ModelViewSet):
     queryset = Warehouse.objects.filter(is_active=True).all()
     serializer_class = WarehouseSerializer
+    permission_classes = [IsStaffOrReadOnly]

@@ -72,7 +72,7 @@ class SalesOrderAPITest(APITestCase):
         SalesOrderFactory(warehouse=self.warehouse, company=self.company)
         response = self.client.get("/sales-orders/", format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data), 2)
+        self.assertGreaterEqual(len(response.data["results"]), 2)
 
     def test_get_single_sales_order(self):
         so = SalesOrderFactory(warehouse=self.warehouse, company=self.company)

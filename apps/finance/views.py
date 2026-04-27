@@ -4,6 +4,7 @@ from typing import Any, Type
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
@@ -23,12 +24,14 @@ from apps.finance.services.accounts_payable_service import AccountsPayableServic
 from apps.finance.services.expense_service import ExpenseService
 from apps.finance.services.report_service import ReportService
 from apps.finance.services.stock_report_service import StockReportService
+from core.permissions import IsStaffOrReadOnly
 
 
 class AccountsPayableViewSet(viewsets.ModelViewSet):
     queryset = AccountsPayable.objects.all().select_related("purchase_order")
     serializer_class = AccountsPayableSerializer
     http_method_names = ["get", "patch", "post"]
+    permission_classes = [IsStaffOrReadOnly]
 
     @action(detail=True, methods=["post"], url_path="record-payment")
     def record_payment(self, request: Request, pk=None) -> Response:
@@ -52,6 +55,7 @@ class AccountsReceivableViewSet(viewsets.ModelViewSet):
     queryset = AccountsReceivable.objects.all().select_related("sales_order")
     serializer_class = AccountsReceivableSerializer
     http_method_names = ["get", "patch", "post"]
+    permission_classes = [IsStaffOrReadOnly]
 
     @action(detail=True, methods=["post"])
     def settle(self, request: Request, pk=None) -> Response:
@@ -73,6 +77,8 @@ class AccountsReceivableViewSet(viewsets.ModelViewSet):
 
 class ReportViewSet(viewsets.ViewSet):
     """All report endpoints — read only."""
+
+    permission_classes = [IsAuthenticated]
 
     @action(detail=False, methods=["get"], url_path="income-statement")
     def income_statement(self, request: Request) -> Response:
@@ -175,11 +181,13 @@ class ExpenseCategoryViewSet(viewsets.ModelViewSet):
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
     http_method_names = ["get", "post", "patch"]
+    permission_classes = [IsStaffOrReadOnly]
 
 
 class ExpenseViewSet(viewsets.ModelViewSet):
     queryset = Expense.objects.select_related("category").all()
     http_method_names = ["get", "post", "patch", "delete"]
+    permission_classes = [IsStaffOrReadOnly]
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "list":
