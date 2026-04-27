@@ -70,9 +70,16 @@ def tiktok_webhook(request: HttpRequest) -> JsonResponse:
 
 
 class TikTokShopViewSet(viewsets.ModelViewSet):
-    queryset = TikTokShop.objects.all()
     serializer_class = TikTokShopSerializer
     permission_classes = [IsStaffOrReadOnly]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated:
+            profile = getattr(user, "profile", None)
+            if profile:
+                return TikTokShop.objects.filter(company=profile.company)
+        return TikTokShop.objects.all()
 
     @action(detail=True, methods=["post"], url_path="refresh-token")
     def refresh_token(self, request: Request, pk=None) -> Response:
@@ -88,12 +95,19 @@ class TikTokShopViewSet(viewsets.ModelViewSet):
 
 
 class TikTokWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = TikTokWebhookLog.objects.all().order_by("-cdate")
     serializer_class = TikTokWebhookLogSerializer
     permission_classes = [IsStaffOrReadOnly]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        user = self.request.user
+        if user.is_authenticated:
+            profile = getattr(user, "profile", None)
+            if profile:
+                qs = TikTokWebhookLog.objects.filter(shop__company=profile.company).order_by("-cdate")
+            else:
+                qs = TikTokWebhookLog.objects.all().order_by("-cdate")
+        else:
+            qs = TikTokWebhookLog.objects.all().order_by("-cdate")
         shop_id = self.request.query_params.get("shop_id")
         processed = self.request.query_params.get("processed")
         if shop_id:

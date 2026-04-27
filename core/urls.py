@@ -32,12 +32,15 @@ from core import views
 @permission_classes([IsAuthenticated])
 def me_view(request):
     user = request.user
+    profile = getattr(user, "profile", None)
     return Response(
         {
             "id": user.id,
             "username": user.username,
             "email": user.email,
             "is_staff": user.is_staff,
+            "company_id": str(profile.company_id) if profile else None,
+            "role": profile.role if profile else None,
         }
     )
 
@@ -58,6 +61,7 @@ urlpatterns = [
 router = DefaultRouter()
 router.register(r"company", views.CompanyViewSet)
 router.register(r"marketplace", views.MarketplaceViewSet)
+router.register(r"marketplace-connections", views.MarketplaceConnectionViewSet, basename="marketplace-connection")
 
 urlpatterns += router.urls
 

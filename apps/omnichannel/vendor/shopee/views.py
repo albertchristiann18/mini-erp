@@ -69,9 +69,16 @@ def shopee_webhook(request: HttpRequest) -> JsonResponse:
 
 
 class ShopeeShopViewSet(viewsets.ModelViewSet):
-    queryset = ShopeeShop.objects.all()
     serializer_class = ShopeeShopSerializer
     permission_classes = [IsStaffOrReadOnly]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated:
+            profile = getattr(user, "profile", None)
+            if profile:
+                return ShopeeShop.objects.filter(company=profile.company)
+        return ShopeeShop.objects.all()
 
     @action(detail=True, methods=["post"], url_path="refresh-token")
     def refresh_token(self, request: Request, pk=None) -> Response:
@@ -114,12 +121,19 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
 
 
 class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = ShopeeWebhookLog.objects.all().order_by("-cdate")
     serializer_class = ShopeeWebhookLogSerializer
     permission_classes = [IsStaffOrReadOnly]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        user = self.request.user
+        if user.is_authenticated:
+            profile = getattr(user, "profile", None)
+            if profile:
+                qs = ShopeeWebhookLog.objects.filter(shop_id__in=ShopeeShop.objects.filter(company=profile.company).values_list("shop_id", flat=True)).order_by("-cdate")
+            else:
+                qs = ShopeeWebhookLog.objects.all().order_by("-cdate")
+        else:
+            qs = ShopeeWebhookLog.objects.all().order_by("-cdate")
         shop_id = self.request.query_params.get("shop_id")
         processed = self.request.query_params.get("processed")
         if shop_id:
