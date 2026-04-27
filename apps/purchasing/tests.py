@@ -1691,3 +1691,81 @@ class PurchaseOrderSerializerValidationTest(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("order_details", serializer.errors)
         self.assertIn("ordered_qty", str(serializer.errors["order_details"]))
+
+
+class EdgeCasePurchasingTests(TestCase):
+    """Tests for edge case fixes in purchasing."""
+
+    def setUp(self):
+        self.company = CompanyFactory()
+        self.warehouse = WarehouseFactory(company=self.company)
+        self.category = CategoryFactory(company=self.company)
+        self.product = ProductFactory(category=self.category, company=self.company)
+        self.product_variant = ProductVariantFactory(product=self.product)
+        self.service = PurchaseOrderService()
+
+    # Fix 5: Enforce PO status transitions
+    def test_invalid_po_status_transition_raises_error(self):
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DRAFT,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            self.service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.DELIVERED})
+        self.assertIn("Cannot transition", str(ctx.exception))
+
+    def test_skip_status_raises_error(self):
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            self.service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.DELIVERED})
+        self.assertIn("Cannot transition", str(ctx.exception))
+
+    def test_cancel_from_draft_allowed(self):
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.DRAFT,
+        )
+        result = self.service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.CANCELLED})
+        self.assertEqual(result.status, PurchaseOrder.POStatus.CANCELLED)
+
+    # Fix 7: AP total syncs with PO recalculate
+    def test_ap_total_syncs_on_po_recalculate(self):
+        from apps.finance.models import AccountsPayable
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.ORDERED,
+            commission_fee_pct=0,
+            delivery_fee=0,
+            cbm=0,
+            shipping_fee_per_cbm=0,
+            exchange_rate=2200,
+        )
+        # Create AP manually
+        ap = AccountsPayable.objects.create(
+            company=self.company,
+            purchase_order=po,
+            total_amount=999999,
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=self.product_variant,
+            ordered_qty=100,
+            discounted_total_price_base=220000,
+        )
+        # Trigger recalculate
+        self.service.update_purchase_order(po, {
+            "order_details": [{
+                "id": str(detail.id),
+                "ordered_qty": 100,
+            }]
+        })
+        ap.refresh_from_db()
+        po.refresh_from_db()
+        self.assertEqual(ap.total_amount, po.total_amount)

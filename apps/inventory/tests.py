@@ -1176,3 +1176,96 @@ class InventoryServiceCOGSUpdateTest(TestCase):
         self.assertIsNotNone(cogs)
         self.assertEqual(cogs.original_qty, 30)
         self.assertEqual(cogs.remaining_qty, 30)
+
+
+class EdgeCaseInventoryTests(TestCase):
+    """Tests for edge case fixes in inventory."""
+
+    def setUp(self):
+        from django.core.exceptions import ValidationError
+        self.ValidationError = ValidationError
+        self.company = CompanyFactory()
+        self.warehouse = WarehouseFactory(company=self.company)
+        self.category = CategoryFactory(company=self.company)
+        self.product = ProductFactory(category=self.category, company=self.company)
+        self.product_variant = ProductVariantFactory(product=self.product)
+        self.service = InventoryService()
+
+    # Fix 2: Negative stock guard
+    def test_outbound_insufficient_stock_raises_error(self):
+        from apps.inventory.models import StockMovement
+        ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            company=self.company,
+            physical_qty=5,
+        )
+        self.product_variant.total_available_qty = 5
+        self.product_variant.save()
+
+        with self.assertRaises(self.ValidationError) as ctx:
+            self.service.record_single_stock_movement(
+                variant_id=self.product_variant.id,
+                warehouse_id=self.warehouse.id,
+                qty=10,
+                movement_type=StockMovement.MovementType.OUTBOUND,
+            )
+        self.assertIn("Insufficient stock", str(ctx.exception))
+
+    def test_outbound_sufficient_stock_succeeds(self):
+        from apps.inventory.models import StockMovement
+        pvw = ProductVariantWarehouseFactory(
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            company=self.company,
+            physical_qty=10,
+        )
+        self.product_variant.total_available_qty = 10
+        self.product_variant.save()
+
+        self.service.record_single_stock_movement(
+            variant_id=self.product_variant.id,
+            warehouse_id=self.warehouse.id,
+            qty=5,
+            movement_type=StockMovement.MovementType.OUTBOUND,
+        )
+        pvw.refresh_from_db()
+        self.assertEqual(pvw.physical_qty, 5)
+
+    # Fix 9: COGS remaining_qty cannot go negative
+    def test_cogs_remaining_qty_negative_raises_error(self):
+        po = PurchaseOrderFactory(
+            warehouse=self.warehouse,
+            company=self.company,
+            status=PurchaseOrder.POStatus.SHIPPED,
+            exchange_rate=2200,
+        )
+        # Create COGS with remaining_qty=5 (some already sold)
+        ProductCogsFactory(
+            company=self.company,
+            product_variant=self.product_variant,
+            warehouse=self.warehouse,
+            reference_number=po.purchase_order_number,
+            price_rmb=Decimal("10.0000"),
+            exchange_rate=2200,
+            cogs_amount=22000,
+            original_qty=50,
+            remaining_qty=5,
+        )
+
+        # Try to decrease received_qty by 10 (but only 5 remaining)
+        data = [{
+            "product_variant_id": str(self.product_variant.id),
+            "ordered_qty": 100,
+            "received_qty": 40,
+            "updated_qty": 50,
+            "unit_price_foreign": Decimal("10"),
+        }]
+
+        with self.assertRaises(self.ValidationError) as ctx:
+            self.service.update_cogs_on_po(
+                po=po,
+                new_status=PurchaseOrder.POStatus.DELIVERED,
+                data=data,
+            )
+        self.assertIn("already sold", str(ctx.exception))

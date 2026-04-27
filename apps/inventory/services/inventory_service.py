@@ -72,6 +72,10 @@ class InventoryService:
             pvw.save(update_fields=["incoming_qty"])
             return
         elif movement_type == StockMovement.MovementType.OUTBOUND:
+            if pvw.physical_qty < qty:
+                raise ValidationError(
+                    f"Insufficient stock. Available: {pvw.physical_qty}, requested: {qty}."
+                )
             pvw.physical_qty -= qty
             variant.total_available_qty -= qty
         else:
@@ -81,6 +85,7 @@ class InventoryService:
         StockMovement.objects.create(
             product_variant=variant,
             warehouse_id=warehouse_id,
+            company_id=variant.company_id,
             quantity=qty,
             movement_type=movement_type,
             balance_before=balance_before,
@@ -537,6 +542,11 @@ class InventoryService:
             else:
                 existing_cogs = existing_cogs_map.get(product_variant_id)
                 if existing_cogs and qty_diff != 0:
+                    if qty_diff < 0 and existing_cogs.remaining_qty + qty_diff < 0:
+                        raise ValidationError(
+                            f"Cannot reduce received qty for {pv}. "
+                            f"{abs(qty_diff) - existing_cogs.remaining_qty} units already sold from this COGS layer."
+                        )
                     existing_cogs.original_qty = received_qty
                     existing_cogs.remaining_qty += qty_diff
                     unit_price_idr = Decimal(str(existing_cogs.price_rmb)) * Decimal(
