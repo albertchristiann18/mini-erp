@@ -40,6 +40,7 @@ def me_view(request):
             "email": user.email,
             "is_staff": user.is_staff,
             "company_id": str(profile.company_id) if profile else None,
+            "company_name": profile.company.name if profile else None,
             "role": profile.role if profile else None,
         }
     )
@@ -49,7 +50,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    path("api/me/", me_view),
+    path("api/profile/", me_view),
     path("", include("apps.inventory.urls")),
     path("", include("apps.purchasing.urls")),
     path("", include("apps.sales.urls")),

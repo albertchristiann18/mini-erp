@@ -15,6 +15,11 @@ class SalesOrder(DefaultModel):
         CANCELLED = "CANCELLED", "Cancelled"
         RETURNED = "RETURNED", "Returned"
 
+    class SourcePlatform(models.TextChoices):
+        SHOPEE = "SHOPEE", "Shopee"
+        TIKTOK = "TIKTOK", "TikTok"
+        MANUAL = "MANUAL", "Manual"
+
     id = ULIDField(
         primary_key=True, default=generate_ulid, editable=False, db_column="sales_order_id"
     )
@@ -26,6 +31,11 @@ class SalesOrder(DefaultModel):
     marketplace_order_number = models.CharField(max_length=255, blank=True, default="")
     status = models.CharField(
         max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING
+    )
+    source_platform = models.CharField(
+        max_length=10,
+        choices=SourcePlatform.choices,
+        default=SourcePlatform.MANUAL,
     )
     warehouse = models.ForeignKey("inventory.Warehouse", on_delete=models.PROTECT)
     customer_name = models.CharField(max_length=255, blank=True, default="")

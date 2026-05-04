@@ -7,6 +7,7 @@ from apps.inventory.models import (
     Product,
     ProductVariant,
     ProductVariantMarketplace,
+    ProductPhoto,
     Warehouse,
 )
 from core.models import Company, Marketplace
@@ -26,8 +27,20 @@ class WarehouseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Warehouse
-        # '__all__' includes all fields: id, name, category_code, description, is_active
         fields = "__all__"
+
+
+class ProductPhotoSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductPhoto
+        fields = ["id", "image_url", "order", "is_primary"]
+
+    def get_image_url(self, obj):
+        if obj.image:
+            return obj.image.url
+        return None
 
 
 class VariantMarketplaceSerializer(serializers.ModelSerializer):
@@ -55,17 +68,14 @@ class VariantSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    # Keep your read-only ID fields
     company_id = serializers.UUIDField(source="company.id", read_only=True)
     category_id = serializers.UUIDField(source="category.id", read_only=True)
 
-    # Add the nested variants
-    # The name 'variants' must match the related_name in your ProductVariant model
     variants = VariantSerializer(many=True, read_only=True)
+    photos = ProductPhotoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
-        # Explicitly listing fields is often safer when nesting
         fields = [
             "id",
             "company_id",
@@ -82,7 +92,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "width",
             "height",
             "is_active",
-            "variants",  # Include the nested field here
+            "variants",
+            "photos",
         ]
 
 
@@ -117,6 +128,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     company_id = serializers.CharField(write_only=True)
     category_id = serializers.CharField(write_only=True)
     variants = VariantCreateSerializer(many=True)
+    description = serializers.CharField(required=True, min_length=25, max_length=5000)
 
     class Meta:
         model = Product
