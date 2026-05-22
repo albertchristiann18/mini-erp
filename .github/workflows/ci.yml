@@ -60,7 +60,7 @@ jobs:
       - run: uv sync --all-extras --dev
       - run: uv run mypy . --config-file mypy.ini
         env:
-          SECRET_KEY: ci-test-secret-key-do-not-use-in-production
+          SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
 
   pytest:
     name: Unit Tests
@@ -91,7 +91,7 @@ jobs:
       - name: Run tests
         run: uv run pytest
         env:
-          SECRET_KEY: ci-test-secret-key-do-not-use-in-production
+          SECRET_KEY: ${{ secrets.CI_SECRET_KEY }}
           DB_NAME: postgres
           DB_USER: postgres
           DB_PASSWORD: password
