@@ -102,3 +102,55 @@ class ShopeeSyncLog(TimeStampedModel):
     class Meta:
         db_table = "shopee_sync_log"
         ordering = ["-started_at"]
+
+
+class ShopeeStockSyncLog(DefaultModel):
+    """
+    Audit log for every stock sync attempt pushed to Shopee.
+    One row per variant per sync attempt.
+    DefaultModel provides: id (ULID), company (FK), cdate, udate.
+    """
+
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="stock_sync_log_id"
+    )
+
+    class SyncType(models.TextChoices):
+        FULL = "FULL", "Full Sync"
+        SINGLE = "SINGLE", "Single Variant"
+
+    shop = models.ForeignKey(
+        ShopeeShop,
+        on_delete=models.CASCADE,
+        related_name="stock_sync_logs",
+    )
+    variant = models.ForeignKey(
+        "inventory.ProductVariant",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="shopee_sync_logs",
+    )
+    sku_variant_code = models.CharField(max_length=100)
+    quantity_synced = models.IntegerField()
+    success = models.BooleanField(default=False)
+    error_message = models.TextField(blank=True, default="")
+    sync_type = models.CharField(
+        max_length=10,
+        choices=SyncType.choices,
+        default=SyncType.SINGLE,
+    )
+    shopee_item_id = models.BigIntegerField(null=True, blank=True)
+    shopee_model_id = models.BigIntegerField(null=True, blank=True)
+    shopee_response = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["-cdate"]
+        indexes = [
+            models.Index(fields=["shop", "cdate"]),
+            models.Index(fields=["variant", "success"]),
+        ]
+
+    def __str__(self) -> str:
+        status = "OK" if self.success else "FAIL"
+        return f"[{status}] {self.sku_variant_code} qty={self.quantity_synced}"
