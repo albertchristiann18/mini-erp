@@ -79,14 +79,10 @@ class CogsConsumptionService:
         Reverse COGS consumption (for cancellation/return).
         Restores quantity back to ProductCogs layers and deletes detail records.
         """
-        cogs_details = list(
-            sales_order_item.cogs_details.select_related("product_cogs").all()
-        )
+        cogs_details = list(sales_order_item.cogs_details.select_related("product_cogs").all())
 
         for detail in cogs_details:
-            cogs_layer = (
-                ProductCogs.objects.select_for_update().get(id=detail.product_cogs_id)
-            )
+            cogs_layer = ProductCogs.objects.select_for_update().get(id=detail.product_cogs_id)
             cogs_layer.remaining_qty += detail.quantity_consumed
             cogs_layer.save(update_fields=["remaining_qty", "udate"])
 
@@ -97,17 +93,16 @@ class CogsConsumptionService:
         sales_order_item.save(update_fields=["actual_cogs_per_unit", "actual_cogs_total", "udate"])
 
     @transaction.atomic
-    def partial_reverse_fifo(
-        self, sales_order_item: SalesOrderItem, return_qty: int
-    ) -> int:
+    def partial_reverse_fifo(self, sales_order_item: SalesOrderItem, return_qty: int) -> int:
         """
         Partially reverse COGS consumption for returns.
         Returns the total reversed COGS amount.
         Reverses from the most recently consumed layers first (LIFO reversal of FIFO consumption).
         """
         cogs_details = list(
-            sales_order_item.cogs_details.select_related("product_cogs")
-            .order_by("-product_cogs__purchase_date", "-product_cogs__cdate")
+            sales_order_item.cogs_details.select_related("product_cogs").order_by(
+                "-product_cogs__purchase_date", "-product_cogs__cdate"
+            )
         )
 
         remaining_to_reverse = return_qty
@@ -139,11 +134,7 @@ class CogsConsumptionService:
         new_total_cogs = sum(d.total_cogs for d in remaining_details)
         new_qty = sales_order_item.quantity - return_qty
         sales_order_item.actual_cogs_total = new_total_cogs
-        sales_order_item.actual_cogs_per_unit = (
-            new_total_cogs // new_qty if new_qty > 0 else 0
-        )
-        sales_order_item.save(
-            update_fields=["actual_cogs_per_unit", "actual_cogs_total", "udate"]
-        )
+        sales_order_item.actual_cogs_per_unit = new_total_cogs // new_qty if new_qty > 0 else 0
+        sales_order_item.save(update_fields=["actual_cogs_per_unit", "actual_cogs_total", "udate"])
 
         return total_reversed_cogs

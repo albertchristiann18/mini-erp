@@ -74,7 +74,9 @@ class PurchaseOrderService:
             allowed = self.STATUS_TRANSITIONS.get(old_status, [])
             if new_status not in allowed and new_status != PurchaseOrder.POStatus.CANCELLED:
                 raise ValidationError(
-                    {"status": f"Cannot transition from {old_status} to {new_status}. Allowed: {allowed}"}
+                    {
+                        "status": f"Cannot transition from {old_status} to {new_status}. Allowed: {allowed}"
+                    }
                 )
 
         order_details = data.get("order_details", [])
@@ -221,6 +223,7 @@ class PurchaseOrderService:
 
             # Create AccountsPayable when PO moves to ORDERED
             from apps.finance.services.accounts_payable_service import AccountsPayableService
+
             AccountsPayableService().create_payable_from_po(po)
 
         elif new_status == PurchaseOrder.POStatus.DELIVERED:

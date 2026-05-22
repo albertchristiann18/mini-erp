@@ -32,9 +32,7 @@ class PaymentRecordSerializer(serializers.ModelSerializer):
 
 class AccountsPayableSerializer(serializers.ModelSerializer):
     id = serializers.CharField(read_only=True)
-    po_number = serializers.CharField(
-        source="purchase_order.purchase_order_number", read_only=True
-    )
+    po_number = serializers.CharField(source="purchase_order.purchase_order_number", read_only=True)
     purchase_order = serializers.CharField(source="purchase_order.id", read_only=True)
     remaining_amount = serializers.IntegerField(read_only=True)
     payments = PaymentRecordSerializer(many=True, read_only=True)
@@ -55,7 +53,15 @@ class AccountsPayableSerializer(serializers.ModelSerializer):
             "cdate",
             "udate",
         ]
-        read_only_fields = ["id", "purchase_order", "total_amount", "paid_amount", "status", "cdate", "udate"]
+        read_only_fields = [
+            "id",
+            "purchase_order",
+            "total_amount",
+            "paid_amount",
+            "status",
+            "cdate",
+            "udate",
+        ]
 
 
 class RecordPaymentSerializer(serializers.Serializer):

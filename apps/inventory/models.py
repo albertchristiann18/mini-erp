@@ -78,7 +78,9 @@ class Product(DefaultModel):
 class ProductPhoto(DefaultModel):
     """Product gallery — up to 9 photos per product."""
 
-    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="product_photo_id")
+    id = ULIDField(
+        primary_key=True, default=generate_ulid, editable=False, db_column="product_photo_id"
+    )
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="photos")
     image = models.FileField(upload_to="products/photos/")
     order = models.PositiveSmallIntegerField(default=0)
@@ -90,7 +92,9 @@ class ProductPhoto(DefaultModel):
 
     def save(self, *args, **kwargs):
         if self.is_primary:
-            ProductPhoto.objects.filter(product=self.product, is_primary=True).exclude(pk=self.pk).update(is_primary=False)
+            ProductPhoto.objects.filter(product=self.product, is_primary=True).exclude(
+                pk=self.pk
+            ).update(is_primary=False)
         super().save(*args, **kwargs)
 
 

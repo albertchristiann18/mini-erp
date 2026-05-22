@@ -1,5 +1,6 @@
 from django.db import transaction
-from apps.inventory.models import ProductVariantWarehouse, StockMovement, ProductVariant
+
+from apps.inventory.models import ProductVariantWarehouse, StockMovement
 
 
 class BulkInventoryService:
@@ -29,14 +30,22 @@ class BulkInventoryService:
                 elif update_type == "min":
                     new_qty = pvw.physical_qty - qty
                     if new_qty < 0:
-                        errors.append({
-                            "variant_id": variant_id,
-                            "warehouse_id": warehouse_id,
-                            "error": f"Insufficient stock. Current: {pvw.physical_qty}, requested reduction: {qty}"
-                        })
+                        errors.append(
+                            {
+                                "variant_id": variant_id,
+                                "warehouse_id": warehouse_id,
+                                "error": f"Insufficient stock. Current: {pvw.physical_qty}, requested reduction: {qty}",
+                            }
+                        )
                         continue
                 else:
-                    errors.append({"variant_id": variant_id, "warehouse_id": warehouse_id, "error": f"Invalid type: {update_type}"})
+                    errors.append(
+                        {
+                            "variant_id": variant_id,
+                            "warehouse_id": warehouse_id,
+                            "error": f"Invalid type: {update_type}",
+                        }
+                    )
                     continue
 
                 pvw.physical_qty = new_qty
@@ -44,8 +53,7 @@ class BulkInventoryService:
 
                 variant = pvw.product_variant
                 total_available = sum(
-                    w.physical_qty - w.checkout_qty
-                    for w in variant.warehouse_stocks.all()
+                    w.physical_qty - w.checkout_qty for w in variant.warehouse_stocks.all()
                 )
                 variant.total_available_qty = total_available
                 variant.save(update_fields=["total_available_qty"])
@@ -63,20 +71,30 @@ class BulkInventoryService:
                     note=f"Bulk {update_type}: {qty}",
                 )
 
-                results.append({
-                    "variant_id": variant_id,
-                    "warehouse_id": warehouse_id,
-                    "old_qty": balance_before,
-                    "new_qty": new_qty,
-                })
+                results.append(
+                    {
+                        "variant_id": variant_id,
+                        "warehouse_id": warehouse_id,
+                        "old_qty": balance_before,
+                        "new_qty": new_qty,
+                    }
+                )
 
             except ProductVariantWarehouse.DoesNotExist:
-                errors.append({
-                    "variant_id": variant_id,
-                    "warehouse_id": warehouse_id,
-                    "error": "Stock record not found. Create a warehouse stock entry first."
-                })
+                errors.append(
+                    {
+                        "variant_id": variant_id,
+                        "warehouse_id": warehouse_id,
+                        "error": "Stock record not found. Create a warehouse stock entry first.",
+                    }
+                )
             except Exception as e:
-                errors.append({"variant_id": variant_id, "warehouse_id": warehouse_id, "error": str(e)})
+                errors.append(
+                    {"variant_id": variant_id, "warehouse_id": warehouse_id, "error": str(e)}
+                )
 
-        return {"results": results, "errors": errors, "summary": {"total": len(updates), "successful": len(results), "failed": len(errors)}}
+        return {
+            "results": results,
+            "errors": errors,
+            "summary": {"total": len(updates), "successful": len(results), "failed": len(errors)},
+        }

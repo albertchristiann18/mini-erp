@@ -4,7 +4,6 @@ import json
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -14,13 +13,13 @@ from apps.inventory.factories import (
     ProductVariantFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.sales.models import SalesOrder
 from apps.omnichannel.vendor.tiktok.factories import (
     TikTokShopFactory,
     TikTokWebhookLogFactory,
 )
-from apps.omnichannel.vendor.tiktok.models import TikTokShop, TikTokWebhookLog
+from apps.omnichannel.vendor.tiktok.models import TikTokWebhookLog
 from apps.omnichannel.vendor.tiktok.views import _verify_signature
+from apps.sales.models import SalesOrder
 from core.factories import CompanyFactory, WarehouseFactory
 
 
@@ -163,9 +162,7 @@ class TikTokOrderSyncTest(TestCase):
 
         self.assertIsNotNone(so1)
         self.assertIsNotNone(so2)
-        self.assertEqual(
-            SalesOrder.objects.filter(marketplace_order_id="TT_ORDER_DUP").count(), 1
-        )
+        self.assertEqual(SalesOrder.objects.filter(marketplace_order_id="TT_ORDER_DUP").count(), 1)
 
 
 class TikTokShopAPITest(APITestCase):

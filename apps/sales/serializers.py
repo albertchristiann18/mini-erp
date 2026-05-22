@@ -9,16 +9,13 @@ from apps.sales.models import (
 )
 from apps.sales.services.sales_service import SalesOrderService
 
-
 # ---- Sales Order Item ----
 
 
 class SalesOrderItemSerializer(serializers.ModelSerializer):
     id = serializers.CharField(required=False)
     product_variant_id = serializers.CharField(write_only=True)
-    product_variant_name = serializers.CharField(
-        source="product_variant.name", read_only=True
-    )
+    product_variant_name = serializers.CharField(source="product_variant.name", read_only=True)
 
     class Meta:
         model = SalesOrderItem
@@ -135,9 +132,7 @@ class SalesOrderUpdateSerializer(serializers.ModelSerializer):
 class SalesOrderItemDetailSerializer(serializers.ModelSerializer):
     id = serializers.CharField(read_only=True)
     product_variant = serializers.CharField(read_only=True)
-    product_variant_name = serializers.CharField(
-        source="product_variant.name", read_only=True
-    )
+    product_variant_name = serializers.CharField(source="product_variant.name", read_only=True)
     cogs_details = SalesOrderCogsDetailSerializer(many=True, read_only=True)
 
     class Meta:
@@ -163,9 +158,7 @@ class SalesReturnItemSerializer(serializers.ModelSerializer):
     id = serializers.CharField(read_only=True)
     sales_order_item = serializers.CharField(read_only=True)
     product_variant = serializers.CharField(read_only=True)
-    product_variant_name = serializers.CharField(
-        source="product_variant.name", read_only=True
-    )
+    product_variant_name = serializers.CharField(source="product_variant.name", read_only=True)
 
     class Meta:
         model = SalesReturnItem

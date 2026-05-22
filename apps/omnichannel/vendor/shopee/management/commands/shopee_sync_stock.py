@@ -17,9 +17,7 @@ class Command(BaseCommand):
                 log.status = "success"
                 log.records_synced = count
                 self.stdout.write(
-                    self.style.SUCCESS(
-                        f"Shop {shop.shop_id}: synced {count} stock records"
-                    )
+                    self.style.SUCCESS(f"Shop {shop.shop_id}: synced {count} stock records")
                 )
             except Exception as e:
                 log.status = "failed"

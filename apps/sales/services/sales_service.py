@@ -9,7 +9,6 @@ from apps.inventory.models import (
     ProductVariantWarehouse,
     StockMovement,
 )
-from apps.inventory.services.inventory_service import InventoryService
 from apps.sales.models import (
     SalesOrder,
     SalesOrderItem,
@@ -108,6 +107,7 @@ class SalesOrderService:
 
                 # Create AccountsReceivable when SO moves to COMPLETED
                 from apps.finance.services.accounts_payable_service import AccountsPayableService
+
                 AccountsPayableService().create_receivable_from_so(so)
 
                 return so
@@ -176,7 +176,6 @@ class SalesOrderService:
                 )
 
         cogs_service = CogsConsumptionService()
-        inventory_service = InventoryService()
 
         for item in items:
             # Consume FIFO COGS
@@ -188,9 +187,7 @@ class SalesOrderService:
             pvw.save(update_fields=["physical_qty", "udate"])
 
             # Update variant total
-            variant = (
-                ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
-            )
+            variant = ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
             variant.total_available_qty -= item.quantity
             variant.save(update_fields=["total_available_qty", "udate"])
 
@@ -226,27 +223,21 @@ class SalesOrderService:
         if so.status == SalesOrder.OrderStatus.CONFIRMED:
             items = list(so.items.select_related("product_variant").all())
             cogs_service = CogsConsumptionService()
-            inventory_service = InventoryService()
 
             for item in items:
                 # Reverse COGS
                 cogs_service.reverse_fifo(item)
 
                 # Restore stock in warehouse
-                pvw = (
-                    ProductVariantWarehouse.objects.select_for_update()
-                    .get(
-                        warehouse_id=so.warehouse_id,
-                        product_variant_id=item.product_variant_id,
-                    )
+                pvw = ProductVariantWarehouse.objects.select_for_update().get(
+                    warehouse_id=so.warehouse_id,
+                    product_variant_id=item.product_variant_id,
                 )
                 pvw.physical_qty += item.quantity
                 pvw.save(update_fields=["physical_qty", "udate"])
 
                 # Restore variant total
-                variant = (
-                    ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
-                )
+                variant = ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
                 variant.total_available_qty += item.quantity
                 variant.save(update_fields=["total_available_qty", "udate"])
 
@@ -373,7 +364,6 @@ class SalesReturnService:
         sales_return.return_date = timezone.now()
 
         cogs_service = CogsConsumptionService()
-        inventory_service = InventoryService()
         so = sales_return.sales_order
 
         return_items = list(
@@ -389,21 +379,16 @@ class SalesReturnService:
             return_item.save(update_fields=["reversed_cogs_total", "udate"])
 
             # Restore warehouse stock
-            pvw = (
-                ProductVariantWarehouse.objects.select_for_update()
-                .get(
-                    warehouse_id=so.warehouse_id,
-                    product_variant_id=return_item.product_variant_id,
-                )
+            pvw = ProductVariantWarehouse.objects.select_for_update().get(
+                warehouse_id=so.warehouse_id,
+                product_variant_id=return_item.product_variant_id,
             )
             pvw.physical_qty += return_item.quantity
             pvw.save(update_fields=["physical_qty", "udate"])
 
             # Restore variant total
-            variant = (
-                ProductVariant.objects.select_for_update().get(
-                    id=return_item.product_variant_id
-                )
+            variant = ProductVariant.objects.select_for_update().get(
+                id=return_item.product_variant_id
             )
             variant.total_available_qty += return_item.quantity
             variant.save(update_fields=["total_available_qty", "udate"])
@@ -432,8 +417,7 @@ class SalesReturnService:
             ar = so.receivable
             # Calculate total refund from this return's items
             total_refund = sum(
-                ri.quantity * ri.sales_order_item.selling_price
-                for ri in return_items
+                ri.quantity * ri.sales_order_item.selling_price for ri in return_items
             )
             ar.expected_amount -= total_refund
             ar.save(update_fields=["expected_amount", "udate"])

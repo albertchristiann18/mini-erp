@@ -4,23 +4,23 @@ from django.db import models
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
-from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 
+from apps.inventory.constants.categories import MASTER_CATEGORY
 from apps.inventory.models import Category, Product, ProductPhoto, Warehouse
 from apps.inventory.serializers import (
     CategorySerializer,
     ProductCreateSerializer,
-    ProductSerializer,
     ProductPhotoSerializer,
+    ProductSerializer,
     ProductVariantStockSerializer,
     WarehouseSerializer,
 )
 from apps.inventory.services import product_service
-from apps.inventory.constants.categories import MASTER_CATEGORY
 from apps.inventory.services.bulk_inventory_service import BulkInventoryService
 from core.permissions import IsStaffOrReadOnly
 
@@ -37,11 +37,9 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Product.objects.filter(is_active=True)
-        search = self.request.query_params.get('search')
+        search = self.request.query_params.get("search")
         if search:
-            qs = qs.filter(
-                models.Q(name__icontains=search) | models.Q(sku_code__icontains=search)
-            )
+            qs = qs.filter(models.Q(name__icontains=search) | models.Q(sku_code__icontains=search))
         return qs
 
     def get_serializer_class(self) -> Type[Serializer]:
@@ -60,7 +58,12 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_201_CREATED)
 
-    @action(detail=True, methods=["post"], url_path="photos", parser_classes=[MultiPartParser, FormParser])
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="photos",
+        parser_classes=[MultiPartParser, FormParser],
+    )
     def upload_photo(self, request: Request, pk: str | None = None) -> Response:
         product = self.get_object()
         if product.photos.count() >= 9:
@@ -71,12 +74,18 @@ class ProductViewSet(viewsets.ModelViewSet):
         order = product.photos.count()
         is_primary = order == 0
         photo = ProductPhoto.objects.create(
-            product=product, company=product.company, image=image, order=order, is_primary=is_primary
+            product=product,
+            company=product.company,
+            image=image,
+            order=order,
+            is_primary=is_primary,
         )
         return Response(ProductPhotoSerializer(photo).data, status=201)
 
     @action(detail=True, methods=["delete"], url_path=r"photos/(?P<photo_id>[^/.]+)")
-    def delete_photo(self, request: Request, pk: str | None = None, photo_id: str | None = None) -> Response:
+    def delete_photo(
+        self, request: Request, pk: str | None = None, photo_id: str | None = None
+    ) -> Response:
         photo = get_object_or_404(ProductPhoto, id=photo_id, product_id=pk)
         photo.delete()
         for i, p in enumerate(ProductPhoto.objects.filter(product_id=pk).order_by("order")):
@@ -86,7 +95,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         return Response(status=204)
 
     @action(detail=True, methods=["patch"], url_path=r"photos/(?P<photo_id>[^/.]+)/reorder")
-    def reorder_photos(self, request: Request, pk: str | None = None, photo_id: str | None = None) -> Response:
+    def reorder_photos(
+        self, request: Request, pk: str | None = None, photo_id: str | None = None
+    ) -> Response:
         photo_ids = request.data.get("photo_ids", [])
         for i, pid in enumerate(photo_ids):
             ProductPhoto.objects.filter(id=pid, product_id=pk).update(order=i, is_primary=(i == 0))
@@ -111,21 +122,26 @@ class ProductVariantStockViewSet(viewsets.ReadOnlyModelViewSet):
       - warehouse: warehouse ID (optional) — if provided, returns physical_qty for that warehouse
       - search: filter by variant name, sku_variant_code, or parent product name
     """
+
     permission_classes = [IsStaffOrReadOnly]
     serializer_class = ProductVariantStockSerializer
 
     def get_queryset(self):
         from apps.inventory.models import ProductVariant
-        qs = ProductVariant.objects.filter(is_active=True).select_related('product', 'product__category')
-        search = self.request.query_params.get('search')
+
+        qs = ProductVariant.objects.filter(is_active=True).select_related(
+            "product", "product__category"
+        )
+        search = self.request.query_params.get("search")
         if search:
             from django.db import models as db_models
+
             qs = qs.filter(
-                db_models.Q(name__icontains=search) |
-                db_models.Q(sku_variant_code__icontains=search) |
-                db_models.Q(product__name__icontains=search)
+                db_models.Q(name__icontains=search)
+                | db_models.Q(sku_variant_code__icontains=search)
+                | db_models.Q(product__name__icontains=search)
             )
-        return qs.order_by('product__name', 'name')
+        return qs.order_by("product__name", "name")
 
 
 class MasterCategoryViewSet(viewsets.ViewSet):
@@ -152,22 +168,28 @@ class InventoryBulkViewSet(viewsets.ViewSet):
         Single variant stock adjustment.
         Body: { variant_id, warehouse_id, type: 'add'|'min'|'set', qty: int }
         """
-        variant_id = request.data.get('variant_id')
-        warehouse_id = request.data.get('warehouse_id')
-        adj_type = request.data.get('type')
-        qty = request.data.get('qty')
+        variant_id = request.data.get("variant_id")
+        warehouse_id = request.data.get("warehouse_id")
+        adj_type = request.data.get("type")
+        qty = request.data.get("qty")
 
         if not all([variant_id, warehouse_id, adj_type, qty is not None]):
-            return Response({'error': 'variant_id, warehouse_id, type, qty are required'}, status=400)
-        if adj_type not in ('add', 'min', 'set'):
-            return Response({'error': 'type must be add, min, or set'}, status=400)
+            return Response(
+                {"error": "variant_id, warehouse_id, type, qty are required"}, status=400
+            )
+        if adj_type not in ("add", "min", "set"):
+            return Response({"error": "type must be add, min, or set"}, status=400)
 
-        result = BulkInventoryService.bulk_update([{
-            'variant_id': variant_id,
-            'warehouse_id': warehouse_id,
-            'qty': qty,
-            'type': adj_type,
-        }])
+        result = BulkInventoryService.bulk_update(
+            [
+                {
+                    "variant_id": variant_id,
+                    "warehouse_id": warehouse_id,
+                    "qty": qty,
+                    "type": adj_type,
+                }
+            ]
+        )
         return Response(result, status=200)
 
 

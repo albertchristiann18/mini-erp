@@ -112,13 +112,9 @@ class Expense(DefaultModel):
         EWALLET = "EWALLET", "E-Wallet"
         CREDIT = "CREDIT", "Credit Card"
 
-    id = ULIDField(
-        primary_key=True, default=generate_ulid, editable=False, db_column="expense_id"
-    )
+    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="expense_id")
     expense_number = models.CharField(max_length=100, unique=True, editable=False, default="")
-    category = models.ForeignKey(
-        ExpenseCategory, on_delete=models.PROTECT, related_name="expenses"
-    )
+    category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name="expenses")
     description = models.TextField()
     amount = models.BigIntegerField()  # IDR
     expense_date = models.DateField()

@@ -1,14 +1,13 @@
 import logging
 
-from apps.inventory.models import ProductVariant, ProductVariantWarehouse
-from apps.omnichannel.vendor.tiktok.client import TikTokClient, TikTokAPIError
+from apps.inventory.models import ProductVariantWarehouse
+from apps.omnichannel.vendor.tiktok.client import TikTokAPIError, TikTokClient
 from apps.omnichannel.vendor.tiktok.models import TikTokShop
 
 logger = logging.getLogger(__name__)
 
 
 class TikTokStockSyncer:
-
     def __init__(self, shop: TikTokShop):
         self.shop = shop
         self.client = TikTokClient(shop)

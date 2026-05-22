@@ -54,9 +54,7 @@ def shopee_webhook(request: HttpRequest) -> JsonResponse:
     if shop_id:
         try:
             shop = ShopeeShop.objects.get(shop_id=shop_id, is_active=True)
-            expected = hmac.new(
-                shop.partner_key.encode(), raw_body, hashlib.sha256
-            ).hexdigest()
+            expected = hmac.new(shop.partner_key.encode(), raw_body, hashlib.sha256).hexdigest()
             if shopee_signature and not hmac.compare_digest(expected, shopee_signature):
                 logger.warning(f"Webhook signature mismatch for shop {shop_id}")
         except ShopeeShop.DoesNotExist:
@@ -95,15 +93,15 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="sync-orders")
     def sync_orders(self, request: Request, pk=None) -> Response:
         shop = self.get_object()
-        from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_orders import sync_orders_for_shop
+        from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_orders import (
+            sync_orders_for_shop,
+        )
 
         try:
             count = sync_orders_for_shop(shop)
             return Response({"synced": count})
         except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=["post"], url_path="sync-stock")
     def sync_stock(self, request: Request, pk=None) -> Response:
@@ -115,9 +113,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
             count = syncer.push_stock_to_shopee()
             return Response({"updated": count})
         except Exception as e:
-            return Response(
-                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -129,7 +125,11 @@ class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
         if user.is_authenticated:
             profile = getattr(user, "profile", None)
             if profile:
-                qs = ShopeeWebhookLog.objects.filter(shop_id__in=ShopeeShop.objects.filter(company=profile.company).values_list("shop_id", flat=True)).order_by("-cdate")
+                qs = ShopeeWebhookLog.objects.filter(
+                    shop_id__in=ShopeeShop.objects.filter(company=profile.company).values_list(
+                        "shop_id", flat=True
+                    )
+                ).order_by("-cdate")
             else:
                 qs = ShopeeWebhookLog.objects.all().order_by("-cdate")
         else:

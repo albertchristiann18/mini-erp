@@ -12,10 +12,10 @@ from apps.inventory.factories import (
     ProductVariantFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.sales.models import SalesOrder
 from apps.omnichannel.vendor.shopee.factories import ShopeeShopFactory, ShopeeWebhookLogFactory
-from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog
+from apps.omnichannel.vendor.shopee.models import ShopeeWebhookLog
 from apps.omnichannel.vendor.shopee.utils import sign_shop_api
+from apps.sales.models import SalesOrder
 from core.factories import CompanyFactory, MarketplaceFactory, WarehouseFactory
 
 

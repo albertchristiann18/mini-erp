@@ -1183,6 +1183,7 @@ class EdgeCaseInventoryTests(TestCase):
 
     def setUp(self):
         from django.core.exceptions import ValidationError
+
         self.ValidationError = ValidationError
         self.company = CompanyFactory()
         self.warehouse = WarehouseFactory(company=self.company)
@@ -1194,6 +1195,7 @@ class EdgeCaseInventoryTests(TestCase):
     # Fix 2: Negative stock guard
     def test_outbound_insufficient_stock_raises_error(self):
         from apps.inventory.models import StockMovement
+
         ProductVariantWarehouseFactory(
             product_variant=self.product_variant,
             warehouse=self.warehouse,
@@ -1214,6 +1216,7 @@ class EdgeCaseInventoryTests(TestCase):
 
     def test_outbound_sufficient_stock_succeeds(self):
         from apps.inventory.models import StockMovement
+
         pvw = ProductVariantWarehouseFactory(
             product_variant=self.product_variant,
             warehouse=self.warehouse,
@@ -1254,13 +1257,15 @@ class EdgeCaseInventoryTests(TestCase):
         )
 
         # Try to decrease received_qty by 10 (but only 5 remaining)
-        data = [{
-            "product_variant_id": str(self.product_variant.id),
-            "ordered_qty": 100,
-            "received_qty": 40,
-            "updated_qty": 50,
-            "unit_price_foreign": Decimal("10"),
-        }]
+        data = [
+            {
+                "product_variant_id": str(self.product_variant.id),
+                "ordered_qty": 100,
+                "received_qty": 40,
+                "updated_qty": 50,
+                "unit_price_foreign": Decimal("10"),
+            }
+        ]
 
         with self.assertRaises(self.ValidationError) as ctx:
             self.service.update_cogs_on_po(

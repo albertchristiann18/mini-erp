@@ -90,9 +90,7 @@ class ShopeeWebhookLog(TimeStampedModel):
 class ShopeeSyncLog(TimeStampedModel):
     """Tracks sync job runs."""
 
-    id = ULIDField(
-        primary_key=True, default=generate_ulid, editable=False, db_column="sync_log_id"
-    )
+    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="sync_log_id")
     shop = models.ForeignKey(ShopeeShop, on_delete=models.CASCADE, related_name="sync_logs")
     sync_type = models.CharField(max_length=50)  # 'orders', 'products', 'stock', 'finance'
     status = models.CharField(max_length=20, default="running")  # running, success, failed

@@ -2,13 +2,12 @@ import logging
 
 from django.db import transaction
 
-from apps.omnichannel.vendor.tiktok.models import TikTokShop, TikTokWebhookLog
+from apps.omnichannel.vendor.tiktok.models import TikTokWebhookLog
 
 logger = logging.getLogger(__name__)
 
 
 class WebhookProcessor:
-
     def process(self, log: TikTokWebhookLog) -> None:
         """Dispatch webhook to the correct handler based on event type."""
         try:

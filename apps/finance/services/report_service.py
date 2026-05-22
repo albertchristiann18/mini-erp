@@ -1,6 +1,6 @@
 from datetime import date
 
-from django.db.models import Sum, Count, Q, F
+from django.db.models import F, Sum
 
 from apps.finance.models import AccountsPayable, AccountsReceivable, Expense, PaymentRecord
 from apps.inventory.models import ProductCogs, ProductVariant
@@ -71,9 +71,7 @@ class ReportService:
             ProductCogs.objects.filter(
                 product_variant__product__company_id=company_id,
                 remaining_qty__gt=0,
-            ).aggregate(
-                total=Sum(F("remaining_qty") * F("cogs_amount"))
-            )["total"]
+            ).aggregate(total=Sum(F("remaining_qty") * F("cogs_amount")))["total"]
             or 0
         )
 
@@ -81,9 +79,7 @@ class ReportService:
             AccountsReceivable.objects.filter(
                 company_id=company_id,
                 status=AccountsReceivable.SettlementStatus.PENDING,
-            ).aggregate(
-                total=Sum(F("expected_amount") - F("settled_amount"))
-            )["total"]
+            ).aggregate(total=Sum(F("expected_amount") - F("settled_amount")))["total"]
             or 0
         )
 
@@ -95,9 +91,7 @@ class ReportService:
                 company_id=company_id,
             )
             .exclude(status=AccountsPayable.PaymentStatus.PAID)
-            .aggregate(
-                total=Sum(F("total_amount") - F("paid_amount"))
-            )["total"]
+            .aggregate(total=Sum(F("total_amount") - F("paid_amount")))["total"]
             or 0
         )
 
@@ -175,14 +169,17 @@ class ReportService:
         ).exclude(status=SalesOrder.OrderStatus.CANCELLED)
 
         today_orders = today_orders_qs.count()
-        today_revenue = today_orders_qs.filter(
-            status__in=[
-                SalesOrder.OrderStatus.CONFIRMED,
-                SalesOrder.OrderStatus.SHIPPING,
-                SalesOrder.OrderStatus.DELIVERED,
-                SalesOrder.OrderStatus.COMPLETED,
-            ]
-        ).aggregate(total=Sum("net_revenue"))["total"] or 0
+        today_revenue = (
+            today_orders_qs.filter(
+                status__in=[
+                    SalesOrder.OrderStatus.CONFIRMED,
+                    SalesOrder.OrderStatus.SHIPPING,
+                    SalesOrder.OrderStatus.DELIVERED,
+                    SalesOrder.OrderStatus.COMPLETED,
+                ]
+            ).aggregate(total=Sum("net_revenue"))["total"]
+            or 0
+        )
 
         # MTD
         mtd_qs = SalesOrder.objects.filter(
@@ -216,10 +213,11 @@ class ReportService:
         outstanding_ap = (
             AccountsPayable.objects.filter(
                 company_id=company_id,
-                status__in=[AccountsPayable.PaymentStatus.UNPAID, AccountsPayable.PaymentStatus.PARTIAL],
-            ).aggregate(
-                total=Sum(F("total_amount") - F("paid_amount"))
-            )["total"]
+                status__in=[
+                    AccountsPayable.PaymentStatus.UNPAID,
+                    AccountsPayable.PaymentStatus.PARTIAL,
+                ],
+            ).aggregate(total=Sum(F("total_amount") - F("paid_amount")))["total"]
             or 0
         )
 

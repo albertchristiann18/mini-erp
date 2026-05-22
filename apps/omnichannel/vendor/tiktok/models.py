@@ -68,9 +68,7 @@ class TikTokWebhookLog(TimeStampedModel):
 class TikTokSyncLog(TimeStampedModel):
     """Sync operation log."""
 
-    id = ULIDField(
-        primary_key=True, default=generate_ulid, editable=False, db_column="sync_log_id"
-    )
+    id = ULIDField(primary_key=True, default=generate_ulid, editable=False, db_column="sync_log_id")
     shop = models.ForeignKey(TikTokShop, on_delete=models.CASCADE, related_name="sync_logs")
     sync_type = models.CharField(max_length=32)  # "orders" or "stock"
     status = models.CharField(max_length=16, default="running")  # "running", "success", "error"

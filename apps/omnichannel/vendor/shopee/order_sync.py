@@ -1,15 +1,17 @@
 import logging
-from datetime import datetime, timezone as dt_timezone
+from datetime import (
+    datetime,
+    timezone as dt_timezone,
+)
 from typing import Optional
 
 from django.db import transaction
-from django.utils import timezone
 
-from apps.inventory.models import ProductVariant, ProductVariantMarketplace
-from apps.sales.models import SalesOrder, SalesOrderItem
-from apps.sales.services.sales_service import SalesOrderService
-from apps.omnichannel.vendor.shopee.client import ShopeeClient, ShopeeAPIError
+from apps.inventory.models import ProductVariant
+from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
 from apps.omnichannel.vendor.shopee.models import ShopeeShop
+from apps.sales.models import SalesOrder
+from apps.sales.services.sales_service import SalesOrderService
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,6 @@ SHOPEE_TO_INTERNAL_STATUS = {
 
 
 class ShopeeOrderSyncer:
-
     def __init__(self, shop: ShopeeShop):
         self.shop = shop
         self.client = ShopeeClient(shop)
@@ -66,14 +67,10 @@ class ShopeeOrderSyncer:
 
         # Create new order
         if not self.shop.default_warehouse:
-            logger.error(
-                f"Shop {self.shop.shop_id} has no default_warehouse — cannot create order"
-            )
+            logger.error(f"Shop {self.shop.shop_id} has no default_warehouse — cannot create order")
             return None
 
-        order_date = datetime.fromtimestamp(
-            shopee_order.get("create_time", 0), tz=dt_timezone.utc
-        )
+        order_date = datetime.fromtimestamp(shopee_order.get("create_time", 0), tz=dt_timezone.utc)
 
         recipient = shopee_order.get("recipient_address", {})
 
@@ -87,9 +84,7 @@ class ShopeeOrderSyncer:
                 )
                 continue
 
-            selling_price = item.get(
-                "model_discounted_price", item.get("model_original_price", 0)
-            )
+            selling_price = item.get("model_discounted_price", item.get("model_original_price", 0))
             quantity = item.get("model_quantity_purchased", 1)
 
             items_data.append(

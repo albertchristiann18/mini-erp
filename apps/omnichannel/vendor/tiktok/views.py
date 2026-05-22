@@ -11,10 +11,9 @@ from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from apps.omnichannel.vendor.tiktok.models import TikTokShop, TikTokSyncLog, TikTokWebhookLog
+from apps.omnichannel.vendor.tiktok.models import TikTokShop, TikTokWebhookLog
 from apps.omnichannel.vendor.tiktok.serializers import (
     TikTokShopSerializer,
-    TikTokSyncLogSerializer,
     TikTokWebhookLogSerializer,
 )
 from apps.omnichannel.vendor.tiktok.webhook_handler import WebhookProcessor
@@ -103,7 +102,9 @@ class TikTokWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
         if user.is_authenticated:
             profile = getattr(user, "profile", None)
             if profile:
-                qs = TikTokWebhookLog.objects.filter(shop__company=profile.company).order_by("-cdate")
+                qs = TikTokWebhookLog.objects.filter(shop__company=profile.company).order_by(
+                    "-cdate"
+                )
             else:
                 qs = TikTokWebhookLog.objects.all().order_by("-cdate")
         else:

@@ -56,9 +56,7 @@ class ShopeeClient:
         resp.raise_for_status()
         data = resp.json()
         if data.get("error"):
-            raise ShopeeAPIError(
-                data["error"], data.get("message", ""), data.get("request_id", "")
-            )
+            raise ShopeeAPIError(data["error"], data.get("message", ""), data.get("request_id", ""))
         return data.get("response", data)
 
     def _post(self, path: str, body: Dict, params: Optional[Dict] = None) -> Dict[str, Any]:
@@ -85,9 +83,7 @@ class ShopeeClient:
         resp.raise_for_status()
         data = resp.json()
         if data.get("error"):
-            raise ShopeeAPIError(
-                data["error"], data.get("message", ""), data.get("request_id", "")
-            )
+            raise ShopeeAPIError(data["error"], data.get("message", ""), data.get("request_id", ""))
         return data.get("response", data)
 
     def refresh_access_token(self):

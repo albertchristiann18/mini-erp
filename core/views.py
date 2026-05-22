@@ -3,7 +3,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from core.models import Company, Marketplace, MarketplaceConnection
-from core.serializers import CompanySerializer, MarketplaceConnectionSerializer, MarketplaceSerializer
+from core.serializers import (
+    CompanySerializer,
+    MarketplaceConnectionSerializer,
+    MarketplaceSerializer,
+)
 
 
 class CompanyViewSet(viewsets.ModelViewSet):

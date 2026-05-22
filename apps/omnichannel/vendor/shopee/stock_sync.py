@@ -1,14 +1,13 @@
 import logging
 
 from apps.inventory.models import ProductVariant, ProductVariantMarketplace, ProductVariantWarehouse
-from apps.omnichannel.vendor.shopee.client import ShopeeClient, ShopeeAPIError
+from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
 from apps.omnichannel.vendor.shopee.models import ShopeeShop
 
 logger = logging.getLogger(__name__)
 
 
 class ShopeeStockSyncer:
-
     def __init__(self, shop: ShopeeShop):
         self.shop = shop
         self.client = ShopeeClient(shop)

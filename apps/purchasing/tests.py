@@ -1731,12 +1731,15 @@ class EdgeCasePurchasingTests(TestCase):
             company=self.company,
             status=PurchaseOrder.POStatus.DRAFT,
         )
-        result = self.service.update_purchase_order(po, {"status": PurchaseOrder.POStatus.CANCELLED})
+        result = self.service.update_purchase_order(
+            po, {"status": PurchaseOrder.POStatus.CANCELLED}
+        )
         self.assertEqual(result.status, PurchaseOrder.POStatus.CANCELLED)
 
     # Fix 7: AP total syncs with PO recalculate
     def test_ap_total_syncs_on_po_recalculate(self):
         from apps.finance.models import AccountsPayable
+
         po = PurchaseOrderFactory(
             warehouse=self.warehouse,
             company=self.company,
@@ -1760,12 +1763,17 @@ class EdgeCasePurchasingTests(TestCase):
             discounted_total_price_base=220000,
         )
         # Trigger recalculate
-        self.service.update_purchase_order(po, {
-            "order_details": [{
-                "id": str(detail.id),
-                "ordered_qty": 100,
-            }]
-        })
+        self.service.update_purchase_order(
+            po,
+            {
+                "order_details": [
+                    {
+                        "id": str(detail.id),
+                        "ordered_qty": 100,
+                    }
+                ]
+            },
+        )
         ap.refresh_from_db()
         po.refresh_from_db()
         self.assertEqual(ap.total_amount, po.total_amount)

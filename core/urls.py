@@ -62,7 +62,11 @@ urlpatterns = [
 router = DefaultRouter()
 router.register(r"company", views.CompanyViewSet)
 router.register(r"marketplace", views.MarketplaceViewSet)
-router.register(r"marketplace-connections", views.MarketplaceConnectionViewSet, basename="marketplace-connection")
+router.register(
+    r"marketplace-connections",
+    views.MarketplaceConnectionViewSet,
+    basename="marketplace-connection",
+)
 
 urlpatterns += router.urls
 

@@ -56,9 +56,7 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         try:
             so = serializer.save()
-            return Response(
-                SalesOrderDetailSerializer(so).data, status=status.HTTP_201_CREATED
-            )
+            return Response(SalesOrderDetailSerializer(so).data, status=status.HTTP_201_CREATED)
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -150,8 +148,6 @@ class SalesReturnViewSet(viewsets.ModelViewSet):
         try:
             service = SalesReturnService()
             sales_return = service.receive_return(sales_return)
-            return Response(
-                SalesReturnSerializer(sales_return).data, status=status.HTTP_200_OK
-            )
+            return Response(SalesReturnSerializer(sales_return).data, status=status.HTTP_200_OK)
         except ValidationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

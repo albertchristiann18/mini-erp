@@ -5,10 +5,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.inventory.models import ProductVariant
+from apps.omnichannel.vendor.tiktok.client import TikTokAPIError, TikTokClient
+from apps.omnichannel.vendor.tiktok.models import TikTokShop
 from apps.sales.models import SalesOrder
 from apps.sales.services.sales_service import SalesOrderService
-from apps.omnichannel.vendor.tiktok.client import TikTokClient, TikTokAPIError
-from apps.omnichannel.vendor.tiktok.models import TikTokShop
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ TIKTOK_TO_INTERNAL_STATUS = {
 
 
 class TikTokOrderSyncer:
-
     def __init__(self, shop: TikTokShop):
         self.shop = shop
         self.client = TikTokClient(shop)
@@ -36,9 +35,7 @@ class TikTokOrderSyncer:
             count = 0
             for order_id in order_ids:
                 try:
-                    response = self.client.get(
-                        "/api/orders/detail", params={"order_id": order_id}
-                    )
+                    response = self.client.get("/api/orders/detail", params={"order_id": order_id})
                     order_data = response.get("order", response)
                     if order_data:
                         result = self.upsert_order(order_data)
@@ -84,9 +81,7 @@ class TikTokOrderSyncer:
             return existing
 
         if not self.shop.warehouse:
-            logger.error(
-                f"Shop {self.shop.shop_id} has no warehouse — cannot create order"
-            )
+            logger.error(f"Shop {self.shop.shop_id} has no warehouse — cannot create order")
             return None
 
         recipient = order_data.get("recipient_address", {})

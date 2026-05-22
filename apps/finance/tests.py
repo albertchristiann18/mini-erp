@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
@@ -8,10 +7,10 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from apps.finance.factories import (
-    ExpenseCategoryFactory,
-    ExpenseFactory,
     AccountsPayableFactory,
     AccountsReceivableFactory,
+    ExpenseCategoryFactory,
+    ExpenseFactory,
     PaymentRecordFactory,
 )
 from apps.finance.models import AccountsPayable, AccountsReceivable, PaymentRecord
@@ -23,14 +22,12 @@ from apps.inventory.factories import (
     ProductCogsFactory,
     ProductFactory,
     ProductVariantFactory,
-    ProductVariantWarehouseFactory,
 )
 from apps.inventory.models import StockMovement
 from apps.purchasing.factories import PurchaseOrderFactory
 from apps.sales.factories import SalesOrderFactory, SalesOrderItemFactory
 from apps.sales.models import SalesOrder, SalesOrderCogsDetail
 from core.factories import WarehouseFactory
-
 
 # ---- Service Tests ----
 
@@ -50,11 +47,14 @@ class AccountsPayableServiceTest(TestCase):
 
     def test_record_payment_updates_status_to_partial(self):
         ap = AccountsPayableFactory(company=self.company, total_amount=1000000)
-        payment = self.service.record_payment(ap, {
-            "amount": 400000,
-            "payment_date": date.today(),
-            "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
-        })
+        payment = self.service.record_payment(
+            ap,
+            {
+                "amount": 400000,
+                "payment_date": date.today(),
+                "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
+            },
+        )
         ap.refresh_from_db()
         self.assertEqual(payment.amount, 400000)
         self.assertEqual(ap.paid_amount, 400000)
@@ -62,11 +62,14 @@ class AccountsPayableServiceTest(TestCase):
 
     def test_record_payment_updates_status_to_paid(self):
         ap = AccountsPayableFactory(company=self.company, total_amount=1000000)
-        self.service.record_payment(ap, {
-            "amount": 1000000,
-            "payment_date": date.today(),
-            "payment_method": PaymentRecord.PaymentMethod.CASH,
-        })
+        self.service.record_payment(
+            ap,
+            {
+                "amount": 1000000,
+                "payment_date": date.today(),
+                "payment_method": PaymentRecord.PaymentMethod.CASH,
+            },
+        )
         ap.refresh_from_db()
         self.assertEqual(ap.paid_amount, 1000000)
         self.assertEqual(ap.status, AccountsPayable.PaymentStatus.PAID)
@@ -74,15 +77,22 @@ class AccountsPayableServiceTest(TestCase):
     def test_record_payment_exceeds_remaining_raises_error(self):
         ap = AccountsPayableFactory(company=self.company, total_amount=1000000)
         with self.assertRaises(ValidationError):
-            self.service.record_payment(ap, {
-                "amount": 1500000,
-                "payment_date": date.today(),
-                "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
-            })
+            self.service.record_payment(
+                ap,
+                {
+                    "amount": 1500000,
+                    "payment_date": date.today(),
+                    "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
+                },
+            )
 
     def test_get_outstanding_returns_unpaid_and_partial(self):
-        ap1 = AccountsPayableFactory(company=self.company, status=AccountsPayable.PaymentStatus.UNPAID)
-        ap2 = AccountsPayableFactory(company=self.company, status=AccountsPayable.PaymentStatus.PARTIAL)
+        ap1 = AccountsPayableFactory(
+            company=self.company, status=AccountsPayable.PaymentStatus.UNPAID
+        )
+        ap2 = AccountsPayableFactory(
+            company=self.company, status=AccountsPayable.PaymentStatus.PARTIAL
+        )
         AccountsPayableFactory(company=self.company, status=AccountsPayable.PaymentStatus.PAID)
         qs = self.service.get_outstanding(str(self.company.id))
         self.assertEqual(qs.count(), 2)
@@ -98,11 +108,14 @@ class AccountsPayableServiceTest(TestCase):
 
     def test_settle_receivable(self):
         ar = AccountsReceivableFactory(company=self.company, expected_amount=500000)
-        result = self.service.settle_receivable(ar, {
-            "settled_amount": 500000,
-            "settlement_date": date.today(),
-            "marketplace_settlement_id": "MKP-123",
-        })
+        result = self.service.settle_receivable(
+            ar,
+            {
+                "settled_amount": 500000,
+                "settlement_date": date.today(),
+                "marketplace_settlement_id": "MKP-123",
+            },
+        )
         result.refresh_from_db()
         self.assertEqual(result.status, AccountsReceivable.SettlementStatus.SETTLED)
         self.assertEqual(result.settled_amount, 500000)
@@ -117,7 +130,7 @@ class ReportServiceTest(TestCase):
         self.month_start = self.today.replace(day=1)
 
     def test_income_statement_with_sales_and_expenses(self):
-        so = SalesOrderFactory(
+        SalesOrderFactory(
             company=self.company,
             status=SalesOrder.OrderStatus.COMPLETED,
             order_date=timezone.now(),
@@ -137,9 +150,7 @@ class ReportServiceTest(TestCase):
             expense_date=self.today,
         )
 
-        result = self.service.income_statement(
-            str(self.company.id), self.month_start, self.today
-        )
+        result = self.service.income_statement(str(self.company.id), self.month_start, self.today)
         self.assertEqual(result["gross_revenue"], 1000000)
         self.assertEqual(result["net_revenue"], 800000)
         self.assertEqual(result["operating_expenses"], 50000)
@@ -394,11 +405,14 @@ class EdgeCaseFinanceTests(TestCase):
     # Fix 3: Lock AP in record_payment (test that payment still works correctly)
     def test_record_payment_with_lock(self):
         ap = AccountsPayableFactory(company=self.company, total_amount=1000000)
-        payment = self.service.record_payment(ap, {
-            "amount": 500000,
-            "payment_date": date.today(),
-            "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
-        })
+        payment = self.service.record_payment(
+            ap,
+            {
+                "amount": 500000,
+                "payment_date": date.today(),
+                "payment_method": PaymentRecord.PaymentMethod.TRANSFER,
+            },
+        )
         self.assertEqual(payment.amount, 500000)
         ap.refresh_from_db()
         self.assertEqual(ap.paid_amount, 500000)
@@ -406,6 +420,7 @@ class EdgeCaseFinanceTests(TestCase):
     # Fix 4: get_or_create for AP (idempotent)
     def test_create_payable_from_po_idempotent(self):
         from apps.purchasing.factories import PurchaseOrderFactory as POFactory
+
         po = POFactory(company=self.company, total_amount=2000000)
         ap1 = self.service.create_payable_from_po(po)
         ap2 = self.service.create_payable_from_po(po)
@@ -422,27 +437,33 @@ class EdgeCaseFinanceTests(TestCase):
 
     # Fix 12: Validate expense amount
     def test_create_expense_zero_amount_raises_error(self):
-        from apps.finance.services.expense_service import ExpenseService
         from apps.finance.factories import ExpenseCategoryFactory
+        from apps.finance.services.expense_service import ExpenseService
+
         cat = ExpenseCategoryFactory(company=self.company)
         with self.assertRaises(ValidationError):
-            ExpenseService().create_expense({
-                "company": self.company,
-                "category": cat,
-                "description": "Test",
-                "amount": 0,
-                "expense_date": date.today(),
-            })
+            ExpenseService().create_expense(
+                {
+                    "company": self.company,
+                    "category": cat,
+                    "description": "Test",
+                    "amount": 0,
+                    "expense_date": date.today(),
+                }
+            )
 
     def test_create_expense_negative_amount_raises_error(self):
-        from apps.finance.services.expense_service import ExpenseService
         from apps.finance.factories import ExpenseCategoryFactory
+        from apps.finance.services.expense_service import ExpenseService
+
         cat = ExpenseCategoryFactory(company=self.company)
         with self.assertRaises(ValidationError):
-            ExpenseService().create_expense({
-                "company": self.company,
-                "category": cat,
-                "description": "Test",
-                "amount": -5000,
-                "expense_date": date.today(),
-            })
+            ExpenseService().create_expense(
+                {
+                    "company": self.company,
+                    "category": cat,
+                    "description": "Test",
+                    "amount": -5000,
+                    "expense_date": date.today(),
+                }
+            )

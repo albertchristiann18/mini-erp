@@ -219,7 +219,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     def update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=kwargs.pop("partial", False))
+        serializer = self.get_serializer(
+            instance, data=request.data, partial=kwargs.pop("partial", False)
+        )
         serializer.is_valid(raise_exception=True)
         service = ExpenseService()
         expense = service.update_expense(instance, serializer.validated_data)

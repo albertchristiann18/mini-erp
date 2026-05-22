@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
@@ -12,7 +10,7 @@ from apps.inventory.factories import (
     ProductVariantFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.inventory.models import ProductCogs, ProductVariant, ProductVariantWarehouse, StockMovement
+from apps.inventory.models import StockMovement
 from apps.sales.factories import SalesOrderFactory, SalesOrderItemFactory
 from apps.sales.models import SalesOrder, SalesOrderCogsDetail, SalesOrderItem, SalesReturn
 from apps.sales.services.cogs_consumption import CogsConsumptionService
@@ -26,9 +24,7 @@ class SalesOrderAPITest(APITestCase):
         self.company = CompanyFactory()
         self.warehouse = WarehouseFactory(company=self.company)
         self.product = ProductFactory(company=self.company)
-        self.product_variant = ProductVariantFactory(
-            product=self.product, company=self.company
-        )
+        self.product_variant = ProductVariantFactory(product=self.product, company=self.company)
         self.pvw = ProductVariantWarehouseFactory(
             product_variant=self.product_variant,
             warehouse=self.warehouse,
@@ -510,21 +506,15 @@ class SalesOrderFullLifecycleTest(TestCase):
         self.assertEqual(so.status, SalesOrder.OrderStatus.CONFIRMED)
 
         # Ship
-        so = self.service.update_sales_order(
-            so, {"status": SalesOrder.OrderStatus.SHIPPING}
-        )
+        so = self.service.update_sales_order(so, {"status": SalesOrder.OrderStatus.SHIPPING})
         self.assertEqual(so.status, SalesOrder.OrderStatus.SHIPPING)
 
         # Deliver
-        so = self.service.update_sales_order(
-            so, {"status": SalesOrder.OrderStatus.DELIVERED}
-        )
+        so = self.service.update_sales_order(so, {"status": SalesOrder.OrderStatus.DELIVERED})
         self.assertEqual(so.status, SalesOrder.OrderStatus.DELIVERED)
 
         # Complete
-        so = self.service.update_sales_order(
-            so, {"status": SalesOrder.OrderStatus.COMPLETED}
-        )
+        so = self.service.update_sales_order(so, {"status": SalesOrder.OrderStatus.COMPLETED})
         self.assertEqual(so.status, SalesOrder.OrderStatus.COMPLETED)
 
         self.pvw.refresh_from_db()
@@ -542,12 +532,8 @@ class SalesOrderFullLifecycleTest(TestCase):
 
         # Confirm → Ship → Deliver
         so = self.service.confirm_order(so)
-        so = self.service.update_sales_order(
-            so, {"status": SalesOrder.OrderStatus.SHIPPING}
-        )
-        so = self.service.update_sales_order(
-            so, {"status": SalesOrder.OrderStatus.DELIVERED}
-        )
+        so = self.service.update_sales_order(so, {"status": SalesOrder.OrderStatus.SHIPPING})
+        so = self.service.update_sales_order(so, {"status": SalesOrder.OrderStatus.DELIVERED})
 
         # Create and receive return
         item = so.items.first()
@@ -638,10 +624,13 @@ class EdgeCaseSalesTests(TestCase):
         so = self._create_so_with_items(10)
         self.so_service.confirm_order(so)
         item = so.items.first()
-        ret = self.return_service.create_return(so, {
-            "reason": "Defective",
-            "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
-        })
+        ret = self.return_service.create_return(
+            so,
+            {
+                "reason": "Defective",
+                "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
+            },
+        )
         # ret is REQUESTED by default
         with self.assertRaises(ValidationError) as ctx:
             self.return_service.receive_return(ret)
@@ -651,10 +640,13 @@ class EdgeCaseSalesTests(TestCase):
         so = self._create_so_with_items(10)
         self.so_service.confirm_order(so)
         item = so.items.first()
-        ret = self.return_service.create_return(so, {
-            "reason": "Defective",
-            "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
-        })
+        ret = self.return_service.create_return(
+            so,
+            {
+                "reason": "Defective",
+                "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
+            },
+        )
         ret.status = SalesReturn.ReturnStatus.APPROVED
         ret.save()
         self.return_service.receive_return(ret)
@@ -667,14 +659,16 @@ class EdgeCaseSalesTests(TestCase):
             "warehouse_id": str(self.warehouse.id),
             "company_id": str(self.company.id),
             "order_date": timezone.now(),
-            "items": [{
-                "product_variant_id": str(self.variant.id),
-                "quantity": 0,
-                "selling_price": 100000,
-                "discount_amount": 0,
-                "commission_fee": 0,
-                "service_fee": 0,
-            }],
+            "items": [
+                {
+                    "product_variant_id": str(self.variant.id),
+                    "quantity": 0,
+                    "selling_price": 100000,
+                    "discount_amount": 0,
+                    "commission_fee": 0,
+                    "service_fee": 0,
+                }
+            ],
         }
         with self.assertRaises(ValidationError):
             self.so_service.create_sales_order(data)
@@ -684,14 +678,16 @@ class EdgeCaseSalesTests(TestCase):
             "warehouse_id": str(self.warehouse.id),
             "company_id": str(self.company.id),
             "order_date": timezone.now(),
-            "items": [{
-                "product_variant_id": str(self.variant.id),
-                "quantity": -5,
-                "selling_price": 100000,
-                "discount_amount": 0,
-                "commission_fee": 0,
-                "service_fee": 0,
-            }],
+            "items": [
+                {
+                    "product_variant_id": str(self.variant.id),
+                    "quantity": -5,
+                    "selling_price": 100000,
+                    "discount_amount": 0,
+                    "commission_fee": 0,
+                    "service_fee": 0,
+                }
+            ],
         }
         with self.assertRaises(ValidationError):
             self.so_service.create_sales_order(data)
@@ -701,21 +697,22 @@ class EdgeCaseSalesTests(TestCase):
             "warehouse_id": str(self.warehouse.id),
             "company_id": str(self.company.id),
             "order_date": timezone.now(),
-            "items": [{
-                "product_variant_id": str(self.variant.id),
-                "quantity": 5,
-                "selling_price": -100,
-                "discount_amount": 0,
-                "commission_fee": 0,
-                "service_fee": 0,
-            }],
+            "items": [
+                {
+                    "product_variant_id": str(self.variant.id),
+                    "quantity": 5,
+                    "selling_price": -100,
+                    "discount_amount": 0,
+                    "commission_fee": 0,
+                    "service_fee": 0,
+                }
+            ],
         }
         with self.assertRaises(ValidationError):
             self.so_service.create_sales_order(data)
 
     # Fix 8: AR update after return (tested here since it involves sales return)
     def test_ar_updated_after_return_received(self):
-        from apps.finance.models import AccountsReceivable
         so = self._create_so_with_items(10)
         self.so_service.confirm_order(so)
         so.refresh_from_db()
@@ -727,15 +724,19 @@ class EdgeCaseSalesTests(TestCase):
         so.status = SalesOrder.OrderStatus.COMPLETED
         so.save()
         from apps.finance.services.accounts_payable_service import AccountsPayableService
+
         AccountsPayableService().create_receivable_from_so(so)
         ar = so.receivable
         original_amount = ar.expected_amount
 
         item = so.items.first()
-        ret = self.return_service.create_return(so, {
-            "reason": "Defective",
-            "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
-        })
+        ret = self.return_service.create_return(
+            so,
+            {
+                "reason": "Defective",
+                "items": [{"sales_order_item_id": str(item.id), "quantity": 3}],
+            },
+        )
         ret.status = SalesReturn.ReturnStatus.APPROVED
         ret.save()
         self.return_service.receive_return(ret)

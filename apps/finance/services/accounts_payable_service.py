@@ -28,7 +28,9 @@ class AccountsPayableService:
         amount = data["amount"]
         if amount > payable.remaining_amount:
             raise ValidationError(
-                {"amount": f"Payment amount {amount} exceeds remaining amount {payable.remaining_amount}."}
+                {
+                    "amount": f"Payment amount {amount} exceeds remaining amount {payable.remaining_amount}."
+                }
             )
 
         payment = PaymentRecord.objects.create(
@@ -57,7 +59,10 @@ class AccountsPayableService:
         """Return queryset of UNPAID and PARTIAL AP records for a company."""
         return AccountsPayable.objects.filter(
             company_id=company_id,
-            status__in=[AccountsPayable.PaymentStatus.UNPAID, AccountsPayable.PaymentStatus.PARTIAL],
+            status__in=[
+                AccountsPayable.PaymentStatus.UNPAID,
+                AccountsPayable.PaymentStatus.PARTIAL,
+            ],
         )
 
     @transaction.atomic

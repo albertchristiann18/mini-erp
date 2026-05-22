@@ -1,8 +1,6 @@
 import logging
-from typing import Dict, Any
 
 from django.db import transaction
-from django.utils import timezone
 
 from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog
 
@@ -14,7 +12,6 @@ EVENT_SHOP_UPDATE = 4
 
 
 class WebhookProcessor:
-
     def process(self, log: ShopeeWebhookLog) -> None:
         """Dispatch webhook to the correct handler based on event code."""
         try:

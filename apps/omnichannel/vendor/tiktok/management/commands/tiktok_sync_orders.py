@@ -27,9 +27,7 @@ class Command(BaseCommand):
                 count = syncer.sync_orders()
                 log.status = "success"
                 log.orders_synced = count
-                self.stdout.write(
-                    self.style.SUCCESS(f"Shop {shop.shop_id}: synced {count} orders")
-                )
+                self.stdout.write(self.style.SUCCESS(f"Shop {shop.shop_id}: synced {count} orders"))
             except Exception as e:
                 log.status = "error"
                 log.message = str(e)

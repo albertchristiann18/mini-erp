@@ -5,7 +5,9 @@ from apps.omnichannel.vendor.shopee import views
 
 router = DefaultRouter()
 router.register(r"shopee/shops", views.ShopeeShopViewSet, basename="shopee-shop")
-router.register(r"shopee/webhook-logs", views.ShopeeWebhookLogViewSet, basename="shopee-webhook-log")
+router.register(
+    r"shopee/webhook-logs", views.ShopeeWebhookLogViewSet, basename="shopee-webhook-log"
+)
 router.register(r"shopee/sync-logs", views.ShopeeSyncLogViewSet, basename="shopee-sync-log")
 
 urlpatterns = [
