@@ -144,9 +144,7 @@ class ShopeeClient:
             },
         )
 
-    def ship_order(
-        self, order_sn: str, tracking_number: str = "", pickup_time_id: str = ""
-    ) -> Any:
+    def ship_order(self, order_sn: str, tracking_number: str = "", pickup_time_id: str = "") -> Any:
         """POST /api/v2/logistics/ship_order"""
         body: Dict[str, Any] = {"order_sn": order_sn}
         if tracking_number:

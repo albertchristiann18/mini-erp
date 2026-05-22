@@ -62,8 +62,8 @@ class TikTokWebhookLog(TimeStampedModel):
         ordering = ["-cdate"]
 
     def __str__(self) -> str:
-            shop_id = self.shop.pk if self.shop else None
-            return f"Webhook {self.event_type} shop={shop_id} at {self.cdate}"
+        shop_id = self.shop.pk if self.shop else None
+        return f"Webhook {self.event_type} shop={shop_id} at {self.cdate}"
 
 
 class TikTokSyncLog(TimeStampedModel):

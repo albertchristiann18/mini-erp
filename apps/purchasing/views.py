@@ -1,8 +1,7 @@
 from typing import Any, Type
 
-from django.db.models import QuerySet
-
 from django.core.exceptions import ValidationError
+from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request

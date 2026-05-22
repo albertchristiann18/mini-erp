@@ -1,12 +1,6 @@
 #!/bin/bash
 
-# Get changed files compared to master branch
-uv run mypy --config-file mypy.ini .
+# Match CI: provide a fallback SECRET_KEY so mypy doesn't crash on Django plugin load
+export SECRET_KEY="${SECRET_KEY:-ci-precommit-secret-key-do-not-use-in-production}"
 
-# export DIFF_FILES=$(git diff --name-only --diff-filter=ACM $(git merge-base HEAD origin/master) | grep "\.py" | grep -v "settings" | grep -v "migrations")
-#
-# if [[ ! -z $DIFF_FILES ]]
-# then
-#     echo "Running mypy on changed files:" $DIFF_FILES
-#     mypy --config-file mypy.ini $DIFF_FILES
-# fi
+uv run mypy --config-file mypy.ini .
