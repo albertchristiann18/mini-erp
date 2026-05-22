@@ -7,6 +7,7 @@ urlpatterns = []
 router = DefaultRouter()
 router.register(r"category", views.CategoryViewSet)
 router.register(r"product", views.ProductViewSet)
+router.register(r"product-variants", views.ProductVariantStockViewSet, basename="product-variant-stock")
 router.register(r"warehouse", views.WarehouseViewSet)
 router.register(r"master-categories", views.MasterCategoryViewSet, basename="master-category")
 router.register(r"inventory", views.InventoryBulkViewSet, basename="inventory-bulk")

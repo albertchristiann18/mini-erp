@@ -1,5 +1,6 @@
 from typing import Any, Type
 
+from django.db import models
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -15,6 +16,7 @@ from apps.inventory.serializers import (
     ProductCreateSerializer,
     ProductSerializer,
     ProductPhotoSerializer,
+    ProductVariantStockSerializer,
     WarehouseSerializer,
 )
 from apps.inventory.services import product_service
@@ -32,6 +34,15 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(is_active=True).all()
     permission_classes = [IsStaffOrReadOnly]
+
+    def get_queryset(self):
+        qs = Product.objects.filter(is_active=True)
+        search = self.request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                models.Q(name__icontains=search) | models.Q(sku_code__icontains=search)
+            )
+        return qs
 
     def get_serializer_class(self) -> Type[Serializer]:
         if self.action == "create":
@@ -93,6 +104,30 @@ class ProductViewSet(viewsets.ModelViewSet):
         return Response({"created": len(request.data), "errors": []}, status=201)
 
 
+class ProductVariantStockViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Returns variants with their stock per warehouse.
+    Query params:
+      - warehouse: warehouse ID (optional) — if provided, returns physical_qty for that warehouse
+      - search: filter by variant name, sku_variant_code, or parent product name
+    """
+    permission_classes = [IsStaffOrReadOnly]
+    serializer_class = ProductVariantStockSerializer
+
+    def get_queryset(self):
+        from apps.inventory.models import ProductVariant
+        qs = ProductVariant.objects.filter(is_active=True).select_related('product', 'product__category')
+        search = self.request.query_params.get('search')
+        if search:
+            from django.db import models as db_models
+            qs = qs.filter(
+                db_models.Q(name__icontains=search) |
+                db_models.Q(sku_variant_code__icontains=search) |
+                db_models.Q(product__name__icontains=search)
+            )
+        return qs.order_by('product__name', 'name')
+
+
 class MasterCategoryViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
 
@@ -109,6 +144,30 @@ class InventoryBulkViewSet(viewsets.ViewSet):
         if not isinstance(updates, list):
             return Response({"error": "Expected JSON array"}, status=400)
         result = BulkInventoryService.bulk_update(updates)
+        return Response(result, status=200)
+
+    @action(detail=False, methods=["post"], url_path="adjust")
+    def adjust(self, request: Request) -> Response:
+        """
+        Single variant stock adjustment.
+        Body: { variant_id, warehouse_id, type: 'add'|'min'|'set', qty: int }
+        """
+        variant_id = request.data.get('variant_id')
+        warehouse_id = request.data.get('warehouse_id')
+        adj_type = request.data.get('type')
+        qty = request.data.get('qty')
+
+        if not all([variant_id, warehouse_id, adj_type, qty is not None]):
+            return Response({'error': 'variant_id, warehouse_id, type, qty are required'}, status=400)
+        if adj_type not in ('add', 'min', 'set'):
+            return Response({'error': 'type must be add, min, or set'}, status=400)
+
+        result = BulkInventoryService.bulk_update([{
+            'variant_id': variant_id,
+            'warehouse_id': warehouse_id,
+            'qty': qty,
+            'type': adj_type,
+        }])
         return Response(result, status=200)
 
 
