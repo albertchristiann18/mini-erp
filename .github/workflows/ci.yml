@@ -59,6 +59,8 @@ jobs:
           enable-cache: true
       - run: uv sync --all-extras --dev
       - run: uv run mypy . --config-file mypy.ini
+        env:
+          SECRET_KEY: ci-test-secret-key-do-not-use-in-production
 
   pytest:
     name: Unit Tests
