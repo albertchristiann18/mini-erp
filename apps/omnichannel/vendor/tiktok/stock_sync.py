@@ -12,7 +12,7 @@ class TikTokStockSyncer:
         self.shop = shop
         self.client = TikTokClient(shop)
 
-    def push_stock(self, variant_ids=None) -> int:
+    def push_stock(self, variant_ids: list | None = None) -> int:
         """Push current stock levels to TikTok."""
         if not self.shop.warehouse:
             logger.warning(f"Shop {self.shop.shop_id} has no warehouse configured")

@@ -32,10 +32,10 @@ class TikTokShop(DefaultModel):
     class Meta:
         db_table = "tiktok_shop"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.shop_name} ({self.shop_id})"
 
-    def is_token_expired(self):
+    def is_token_expired(self) -> bool:
         from django.utils import timezone
 
         if not self.token_expires_at:
@@ -61,8 +61,9 @@ class TikTokWebhookLog(TimeStampedModel):
         db_table = "tiktok_webhook_log"
         ordering = ["-cdate"]
 
-    def __str__(self):
-        return f"Webhook {self.event_type} shop={self.shop_id} at {self.cdate}"
+    def __str__(self) -> str:
+            shop_id = self.shop.pk if self.shop else None
+            return f"Webhook {self.event_type} shop={shop_id} at {self.cdate}"
 
 
 class TikTokSyncLog(TimeStampedModel):

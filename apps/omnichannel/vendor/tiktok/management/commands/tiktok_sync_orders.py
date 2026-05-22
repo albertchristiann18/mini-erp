@@ -1,4 +1,6 @@
+import argparse
 import logging
+from typing import Any
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -12,10 +14,10 @@ logger = logging.getLogger(__name__)
 class Command(BaseCommand):
     help = "Sync orders from TikTok for all active shops"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--shop-id", type=str, help="Sync only this shop_id")
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         shops = TikTokShop.objects.filter(is_active=True)
         if options.get("shop_id"):
             shops = shops.filter(shop_id=options["shop_id"])

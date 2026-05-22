@@ -37,7 +37,7 @@ class ProductPhotoSerializer(serializers.ModelSerializer):
         model = ProductPhoto
         fields = ["id", "image_url", "order", "is_primary"]
 
-    def get_image_url(self, obj):
+    def get_image_url(self, obj: ProductPhoto) -> Any:
         if obj.image:
             return obj.image.url
         return None
@@ -183,7 +183,7 @@ class ProductVariantStockSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
-    def get_physical_qty(self, obj):
+    def get_physical_qty(self, obj: ProductVariant) -> int:
         req = self.context.get("request")
         # DRF wraps the request with .query_params; plain WSGIRequest uses .GET
         params = getattr(req, "query_params", None) or getattr(req, "GET", {})

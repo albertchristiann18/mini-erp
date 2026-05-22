@@ -1,3 +1,4 @@
+# mypy: disable-error-code="no-untyped-call"
 import factory
 
 from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog

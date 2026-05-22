@@ -32,7 +32,7 @@ class AccountsPayable(DefaultModel):
         return self.total_amount - self.paid_amount
 
     def __str__(self) -> str:
-        return f"AP-{self.purchase_order_id} ({self.status})"
+        return f"AP-{self.purchase_order.pk} ({self.status})"
 
 
 class PaymentRecord(DefaultModel):
@@ -86,7 +86,7 @@ class AccountsReceivable(DefaultModel):
     note = models.TextField(blank=True, default="")
 
     def __str__(self) -> str:
-        return f"AR-{self.sales_order_id} ({self.status})"
+        return f"AR-{self.sales_order.pk} ({self.status})"
 
 
 class ExpenseCategory(DefaultModel):

@@ -1,8 +1,10 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import QuerySet
 
 from apps.finance.models import AccountsPayable, AccountsReceivable, PaymentRecord
 from apps.purchasing.models import PurchaseOrder
+from apps.sales.models import SalesOrder
 
 
 class AccountsPayableService:
@@ -55,7 +57,7 @@ class AccountsPayableService:
 
         return payment
 
-    def get_outstanding(self, company_id: str):
+    def get_outstanding(self, company_id: str) -> QuerySet[AccountsPayable]:
         """Return queryset of UNPAID and PARTIAL AP records for a company."""
         return AccountsPayable.objects.filter(
             company_id=company_id,
@@ -66,7 +68,7 @@ class AccountsPayableService:
         )
 
     @transaction.atomic
-    def create_receivable_from_so(self, so) -> AccountsReceivable:
+    def create_receivable_from_so(self, so: SalesOrder) -> AccountsReceivable:
         """Create AccountsReceivable from a SalesOrder when SO transitions to COMPLETED."""
         ar, _ = AccountsReceivable.objects.get_or_create(
             sales_order=so,

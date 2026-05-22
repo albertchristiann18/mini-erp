@@ -1,5 +1,8 @@
+from django.db.models import QuerySet
+
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.request import Request
 from rest_framework.response import Response
 
 from core.models import Company, Marketplace, MarketplaceConnection
@@ -23,7 +26,7 @@ class MarketplaceViewSet(viewsets.ModelViewSet):
 class MarketplaceConnectionViewSet(viewsets.ModelViewSet):
     serializer_class = MarketplaceConnectionSerializer
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[MarketplaceConnection]:
         user = self.request.user
         if user.is_authenticated:
             profile = getattr(user, "profile", None)
@@ -31,14 +34,14 @@ class MarketplaceConnectionViewSet(viewsets.ModelViewSet):
                 return MarketplaceConnection.objects.filter(company=profile.company)
         return MarketplaceConnection.objects.all()
 
-    def perform_create(self, serializer):
+    def perform_create(self, serializer: MarketplaceConnectionSerializer) -> None:
         user = self.request.user
         profile = getattr(user, "profile", None) if user.is_authenticated else None
         company = profile.company if profile else None
         serializer.save(company=company)
 
     @action(detail=True, methods=["post"])
-    def toggle_active(self, request, pk=None):
+    def toggle_active(self, request: Request, pk: str | None = None) -> Response:
         conn = self.get_object()
         conn.is_active = not conn.is_active
         conn.save()

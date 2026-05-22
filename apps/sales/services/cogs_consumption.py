@@ -18,7 +18,7 @@ class CogsConsumptionService:
         if SalesOrderCogsDetail.objects.filter(sales_order_item=sales_order_item).exists():
             return list(SalesOrderCogsDetail.objects.filter(sales_order_item=sales_order_item))
 
-        variant_id = sales_order_item.product_variant_id
+        variant_id = sales_order_item.product_variant.pk
         qty_needed = sales_order_item.quantity
 
         cogs_layers = list(
@@ -52,7 +52,7 @@ class CogsConsumptionService:
             layer.save(update_fields=["remaining_qty", "udate"])
 
             cogs_detail = SalesOrderCogsDetail(
-                company_id=sales_order_item.company_id,
+                company_id=sales_order_item.sales_order.company.pk,
                 sales_order_item=sales_order_item,
                 product_cogs=layer,
                 quantity_consumed=consume_qty,
@@ -82,7 +82,7 @@ class CogsConsumptionService:
         cogs_details = list(sales_order_item.cogs_details.select_related("product_cogs").all())
 
         for detail in cogs_details:
-            cogs_layer = ProductCogs.objects.select_for_update().get(id=detail.product_cogs_id)
+            cogs_layer = ProductCogs.objects.select_for_update().get(id=detail.product_cogs.pk)
             cogs_layer.remaining_qty += detail.quantity_consumed
             cogs_layer.save(update_fields=["remaining_qty", "udate"])
 
@@ -114,7 +114,7 @@ class CogsConsumptionService:
 
             reverse_qty = min(remaining_to_reverse, detail.quantity_consumed)
 
-            cogs_layer = ProductCogs.objects.select_for_update().get(id=detail.product_cogs_id)
+            cogs_layer = ProductCogs.objects.select_for_update().get(id=detail.product_cogs.pk)
             cogs_layer.remaining_qty += reverse_qty
             cogs_layer.save(update_fields=["remaining_qty", "udate"])
 

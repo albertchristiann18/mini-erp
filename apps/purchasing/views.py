@@ -1,5 +1,7 @@
 from typing import Any, Type
 
+from django.db.models import QuerySet
+
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -42,12 +44,12 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         else:  # retrieve
             return PurchaseOrderReadSerializer
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[PurchaseOrder]:
         qs = super().get_queryset()
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
-        return qs
+        return qs  # type: ignore[no-any-return]
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         """Get list of all Purchase Orders (basic info without details)"""
@@ -96,7 +98,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"])
-    def advance_status(self, request: Request, pk=None) -> Response:
+    def advance_status(self, request: Request, pk: Any = None) -> Response:
         """POST /purchase-order/{id}/advance_status/ with body {"status": "ORDERED"}"""
         po = self.get_object()
         new_status = request.data.get("status")

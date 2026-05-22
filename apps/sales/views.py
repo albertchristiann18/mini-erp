@@ -1,6 +1,7 @@
 from typing import Any, Type
 
 from django.core.exceptions import ValidationError
+from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request
@@ -35,12 +36,12 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
         else:
             return SalesOrderDetailSerializer
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[SalesOrder]:
         qs = super().get_queryset()
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
-        return qs
+        return qs  # type: ignore[no-any-return]
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         queryset = self.filter_queryset(self.get_queryset())

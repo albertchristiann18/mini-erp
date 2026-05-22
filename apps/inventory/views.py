@@ -1,6 +1,7 @@
 from typing import Any, Type
 
 from django.db import models
+from django.db.models import QuerySet
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -35,7 +36,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(is_active=True).all()
     permission_classes = [IsStaffOrReadOnly]
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[Product]:
         qs = Product.objects.filter(is_active=True)
         search = self.request.query_params.get("search")
         if search:
@@ -126,7 +127,7 @@ class ProductVariantStockViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsStaffOrReadOnly]
     serializer_class = ProductVariantStockSerializer
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet:
         from apps.inventory.models import ProductVariant
 
         qs = ProductVariant.objects.filter(is_active=True).select_related(

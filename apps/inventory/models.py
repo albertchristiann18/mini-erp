@@ -90,7 +90,7 @@ class ProductPhoto(DefaultModel):
         ordering = ["order"]
         db_table = "product_photo"
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if self.is_primary:
             ProductPhoto.objects.filter(product=self.product, is_primary=True).exclude(
                 pk=self.pk

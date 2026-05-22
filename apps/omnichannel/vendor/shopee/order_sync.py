@@ -103,9 +103,9 @@ class ShopeeOrderSyncer:
             return None
 
         so_data = {
-            "company_id": str(self.shop.company_id),
-            "warehouse_id": str(self.shop.default_warehouse_id),
-            "marketplace_id": str(self.shop.marketplace_id) if self.shop.marketplace_id else None,
+            "company_id": str(self.shop.company.pk),
+            "warehouse_id": str(self.shop.default_warehouse.pk),
+            "marketplace_id": str(self.shop.marketplace.pk) if self.shop.marketplace else None,
             "marketplace_order_id": order_sn,
             "marketplace_order_number": order_sn,
             "status": internal_status,

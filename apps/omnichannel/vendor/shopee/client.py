@@ -25,14 +25,14 @@ class ShopeeClient:
     def __init__(self, shop: ShopeeShop):
         self.shop = shop
 
-    def _ensure_token_fresh(self):
+    def _ensure_token_fresh(self) -> None:
         """Refresh access token if expired or about to expire (within 10 min)."""
         if not self.shop.token_expires_at:
             return
         if timezone.now() >= self.shop.token_expires_at - timedelta(minutes=10):
             self.refresh_access_token()
 
-    def _get(self, path: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+    def _get(self, path: str, params: Optional[Dict] = None) -> Any:
         self._ensure_token_fresh()
         ts = get_timestamp()
         sign = sign_shop_api(
@@ -59,7 +59,7 @@ class ShopeeClient:
             raise ShopeeAPIError(data["error"], data.get("message", ""), data.get("request_id", ""))
         return data.get("response", data)
 
-    def _post(self, path: str, body: Dict, params: Optional[Dict] = None) -> Dict[str, Any]:
+    def _post(self, path: str, body: Dict, params: Optional[Dict] = None) -> Any:
         self._ensure_token_fresh()
         ts = get_timestamp()
         sign = sign_shop_api(
@@ -86,7 +86,7 @@ class ShopeeClient:
             raise ShopeeAPIError(data["error"], data.get("message", ""), data.get("request_id", ""))
         return data.get("response", data)
 
-    def refresh_access_token(self):
+    def refresh_access_token(self) -> None:
         """Use refresh_token to get a new access_token."""
         path = "/api/v2/auth/access_token/get"
         ts = get_timestamp()
@@ -121,7 +121,7 @@ class ShopeeClient:
         time_to: int = 0,
         page_size: int = 50,
         cursor: str = "",
-    ) -> Dict:
+    ) -> Any:
         """GET /api/v2/order/get_order_list"""
         params: Dict[str, Any] = {
             "time_range_field": time_range_field,
@@ -134,7 +134,7 @@ class ShopeeClient:
             params["cursor"] = cursor
         return self._get("/api/v2/order/get_order_list", params)
 
-    def get_order_detail(self, order_sn_list: list) -> Dict:
+    def get_order_detail(self, order_sn_list: list) -> Any:
         """GET /api/v2/order/get_order_detail"""
         return self._get(
             "/api/v2/order/get_order_detail",
@@ -146,7 +146,7 @@ class ShopeeClient:
 
     def ship_order(
         self, order_sn: str, tracking_number: str = "", pickup_time_id: str = ""
-    ) -> Dict:
+    ) -> Any:
         """POST /api/v2/logistics/ship_order"""
         body: Dict[str, Any] = {"order_sn": order_sn}
         if tracking_number:
@@ -158,7 +158,7 @@ class ShopeeClient:
 
     def get_item_list(
         self, offset: int = 0, page_size: int = 50, item_status: str = "NORMAL"
-    ) -> Dict:
+    ) -> Any:
         """GET /api/v2/product/get_item_list"""
         return self._get(
             "/api/v2/product/get_item_list",
@@ -169,7 +169,7 @@ class ShopeeClient:
             },
         )
 
-    def get_item_base_info(self, item_id_list: list) -> Dict:
+    def get_item_base_info(self, item_id_list: list) -> Any:
         """GET /api/v2/product/get_item_base_info"""
         return self._get(
             "/api/v2/product/get_item_base_info",
@@ -180,7 +180,7 @@ class ShopeeClient:
             },
         )
 
-    def update_stock(self, item_id: int, model_list: list) -> Dict:
+    def update_stock(self, item_id: int, model_list: list) -> Any:
         """POST /api/v2/product/update_stock — update stock for variants"""
         return self._post(
             "/api/v2/product/update_stock",
@@ -192,12 +192,12 @@ class ShopeeClient:
 
     # ── Shop APIs ────────────────────────────────────────────────────────────
 
-    def get_shop_info(self) -> Dict:
+    def get_shop_info(self) -> Any:
         """GET /api/v2/shop/get_shop_info"""
         return self._get("/api/v2/shop/get_shop_info")
 
     # ── Finance APIs ─────────────────────────────────────────────────────────
 
-    def get_escrow_detail(self, order_sn: str) -> Dict:
+    def get_escrow_detail(self, order_sn: str) -> Any:
         """GET /api/v2/payment/get_escrow_detail — get payout info for an order"""
         return self._get("/api/v2/payment/get_escrow_detail", {"order_sn": order_sn})

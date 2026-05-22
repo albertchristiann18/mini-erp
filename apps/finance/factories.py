@@ -1,3 +1,5 @@
+# mypy: disable-error-code="no-untyped-call"
+
 from datetime import date
 
 import factory

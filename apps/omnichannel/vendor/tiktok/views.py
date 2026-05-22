@@ -6,6 +6,7 @@ import logging
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request
@@ -72,7 +73,7 @@ class TikTokShopViewSet(viewsets.ModelViewSet):
     serializer_class = TikTokShopSerializer
     permission_classes = [IsStaffOrReadOnly]
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[TikTokShop]:
         user = self.request.user
         if user.is_authenticated:
             profile = getattr(user, "profile", None)
@@ -81,13 +82,13 @@ class TikTokShopViewSet(viewsets.ModelViewSet):
         return TikTokShop.objects.all()
 
     @action(detail=True, methods=["post"], url_path="refresh-token")
-    def refresh_token(self, request: Request, pk=None) -> Response:
+    def refresh_token(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
         from apps.omnichannel.vendor.tiktok.client import TikTokAPIError, TikTokClient
 
         try:
             client = TikTokClient(shop)
-            client.refresh_access_token()
+            client.refresh_access_token()  # type: ignore[no-untyped-call]
             return Response({"message": "Token refreshed"})
         except TikTokAPIError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -97,7 +98,7 @@ class TikTokWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TikTokWebhookLogSerializer
     permission_classes = [IsStaffOrReadOnly]
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[TikTokWebhookLog]:
         user = self.request.user
         if user.is_authenticated:
             profile = getattr(user, "profile", None)

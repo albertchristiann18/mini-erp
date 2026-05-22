@@ -1,5 +1,7 @@
+import argparse
 import logging
 from datetime import timedelta
+from typing import Any
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
@@ -63,11 +65,11 @@ def sync_orders_for_shop(shop: ShopeeShop, hours_back: int = 24) -> int:
 class Command(BaseCommand):
     help = "Sync orders from Shopee for all active shops"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--shop-id", type=int, help="Sync only this shop_id")
         parser.add_argument("--hours", type=int, default=24, help="Hours back to sync")
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         shops = ShopeeShop.objects.filter(is_active=True)
         if options.get("shop_id"):
             shops = shops.filter(shop_id=options["shop_id"])

@@ -9,6 +9,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 
+from django.db.models import QuerySet
+
 from apps.finance.models import AccountsPayable, AccountsReceivable, Expense, ExpenseCategory
 from apps.finance.serializers import (
     AccountsPayableSerializer,
@@ -34,7 +36,7 @@ class AccountsPayableViewSet(viewsets.ModelViewSet):
     permission_classes = [IsStaffOrReadOnly]
 
     @action(detail=True, methods=["post"], url_path="record-payment")
-    def record_payment(self, request: Request, pk=None) -> Response:
+    def record_payment(self, request: Request, pk: str | None = None) -> Response:
         """POST /accounts-payable/{id}/record-payment/"""
         payable = self.get_object()
         serializer = RecordPaymentSerializer(data=request.data)
@@ -58,7 +60,7 @@ class AccountsReceivableViewSet(viewsets.ModelViewSet):
     permission_classes = [IsStaffOrReadOnly]
 
     @action(detail=True, methods=["post"])
-    def settle(self, request: Request, pk=None) -> Response:
+    def settle(self, request: Request, pk: str | None = None) -> Response:
         """POST /accounts-receivable/{id}/settle/"""
         receivable = self.get_object()
         serializer = SettleReceivableSerializer(data=request.data)
@@ -196,7 +198,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             return ExpenseSummarySerializer
         return ExpenseSerializer
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[Expense]:
         qs = super().get_queryset()
         category = self.request.query_params.get("category")
         start_date = self.request.query_params.get("start_date")
@@ -208,7 +210,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.filter(expense_date__gte=start_date)
         if end_date:
             qs = qs.filter(expense_date__lte=end_date)
-        return qs
+        return qs  # type: ignore[no-any-return]
 
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         serializer = self.get_serializer(data=request.data)

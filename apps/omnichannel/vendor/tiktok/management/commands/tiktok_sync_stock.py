@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -8,7 +10,7 @@ from apps.omnichannel.vendor.tiktok.stock_sync import TikTokStockSyncer
 class Command(BaseCommand):
     help = "Push stock levels to TikTok for all active shops"
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         for shop in TikTokShop.objects.filter(is_active=True):
             log = TikTokSyncLog.objects.create(shop=shop, sync_type="stock", status="running")
             try:

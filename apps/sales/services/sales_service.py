@@ -151,23 +151,23 @@ class SalesOrderService:
             raise ValidationError({"items": "Cannot confirm an order with no items."})
 
         # Collect variant IDs for stock check
-        variant_ids = [item.product_variant_id for item in items]
+        variant_ids = [item.product_variant.pk for item in items]
 
         # Lock and check stock
         pvw_map = {
-            str(pvw.product_variant_id): pvw
+            str(pvw.product_variant.pk): pvw
             for pvw in ProductVariantWarehouse.objects.select_for_update().filter(
-                warehouse_id=so.warehouse_id,
+                warehouse_id=so.warehouse.pk,
                 product_variant_id__in=variant_ids,
             )
         }
 
         for item in items:
-            pvw = pvw_map.get(str(item.product_variant_id))
+            pvw = pvw_map.get(str(item.product_variant.pk))
             if not pvw:
                 raise ValidationError(
-                    f"No stock record found for variant {item.product_variant_id} "
-                    f"in warehouse {so.warehouse_id}."
+                    f"No stock record found for variant {item.product_variant.pk} "
+                    f"in warehouse {so.warehouse.pk}."
                 )
             if pvw.available_qty < item.quantity:
                 raise ValidationError(
@@ -179,23 +179,23 @@ class SalesOrderService:
 
         for item in items:
             # Consume FIFO COGS
-            cogs_service.consume_fifo(item, so.warehouse_id)
+            cogs_service.consume_fifo(item, so.warehouse.pk)
 
             # Deduct stock
-            pvw = pvw_map[str(item.product_variant_id)]
+            pvw = pvw_map[str(item.product_variant.pk)]
             pvw.physical_qty -= item.quantity
             pvw.save(update_fields=["physical_qty", "udate"])
 
             # Update variant total
-            variant = ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
+            variant = ProductVariant.objects.select_for_update().get(id=item.product_variant.pk)
             variant.total_available_qty -= item.quantity
             variant.save(update_fields=["total_available_qty", "udate"])
 
             # Create stock movement
             StockMovement.objects.create(
-                product_variant_id=item.product_variant_id,
-                warehouse_id=so.warehouse_id,
-                company_id=so.company_id,
+                product_variant_id=item.product_variant.pk,
+                warehouse_id=so.warehouse.pk,
+                company_id=so.company.pk,
                 quantity=item.quantity,
                 movement_type=StockMovement.MovementType.OUTBOUND,
                 balance_before=variant.total_available_qty + item.quantity,
@@ -230,22 +230,22 @@ class SalesOrderService:
 
                 # Restore stock in warehouse
                 pvw = ProductVariantWarehouse.objects.select_for_update().get(
-                    warehouse_id=so.warehouse_id,
-                    product_variant_id=item.product_variant_id,
+                    warehouse_id=so.warehouse.pk,
+                    product_variant_id=item.product_variant.pk,
                 )
                 pvw.physical_qty += item.quantity
                 pvw.save(update_fields=["physical_qty", "udate"])
 
                 # Restore variant total
-                variant = ProductVariant.objects.select_for_update().get(id=item.product_variant_id)
+                variant = ProductVariant.objects.select_for_update().get(id=item.product_variant.pk)
                 variant.total_available_qty += item.quantity
                 variant.save(update_fields=["total_available_qty", "udate"])
 
                 # Create return stock movement
                 StockMovement.objects.create(
-                    product_variant_id=item.product_variant_id,
-                    warehouse_id=so.warehouse_id,
-                    company_id=so.company_id,
+                    product_variant_id=item.product_variant.pk,
+                    warehouse_id=so.warehouse.pk,
+                    company_id=so.company.pk,
                     quantity=item.quantity,
                     movement_type=StockMovement.MovementType.RETURN,
                     balance_before=variant.total_available_qty - item.quantity,
@@ -302,7 +302,7 @@ class SalesReturnService:
 
         sales_return = SalesReturn.objects.create(
             sales_order=sales_order,
-            company_id=sales_order.company_id,
+            company_id=sales_order.company.pk,
             **data,
         )
 
@@ -316,7 +316,7 @@ class SalesReturnService:
                 SalesReturn.ReturnStatus.RECEIVED,
             ],
         ).exclude(sales_return=sales_return):
-            key = str(ri.sales_order_item_id)
+            key = str(ri.sales_order_item.pk)
             existing_returns[key] = existing_returns.get(key, 0) + ri.quantity
 
         return_items = []
@@ -338,8 +338,8 @@ class SalesReturnService:
                 SalesReturnItem(
                     sales_return=sales_return,
                     sales_order_item=so_item,
-                    product_variant_id=so_item.product_variant_id,
-                    company_id=sales_order.company_id,
+                    product_variant_id=so_item.product_variant.pk,
+                    company_id=sales_order.company.pk,
                     quantity=return_qty,
                 )
             )
@@ -380,24 +380,24 @@ class SalesReturnService:
 
             # Restore warehouse stock
             pvw = ProductVariantWarehouse.objects.select_for_update().get(
-                warehouse_id=so.warehouse_id,
-                product_variant_id=return_item.product_variant_id,
+                warehouse_id=so.warehouse.pk,
+                product_variant_id=return_item.product_variant.pk,
             )
             pvw.physical_qty += return_item.quantity
             pvw.save(update_fields=["physical_qty", "udate"])
 
             # Restore variant total
             variant = ProductVariant.objects.select_for_update().get(
-                id=return_item.product_variant_id
+                id=return_item.product_variant.pk
             )
             variant.total_available_qty += return_item.quantity
             variant.save(update_fields=["total_available_qty", "udate"])
 
             # Create stock movement
             StockMovement.objects.create(
-                product_variant_id=return_item.product_variant_id,
-                warehouse_id=so.warehouse_id,
-                company_id=so.company_id,
+                product_variant_id=return_item.product_variant.pk,
+                warehouse_id=so.warehouse.pk,
+                company_id=so.company.pk,
                 quantity=return_item.quantity,
                 movement_type=StockMovement.MovementType.RETURN,
                 balance_before=variant.total_available_qty - return_item.quantity,

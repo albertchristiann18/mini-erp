@@ -116,8 +116,8 @@ class TikTokOrderSyncer:
             return None
 
         so_data = {
-            "company_id": str(self.shop.company_id),
-            "warehouse_id": str(self.shop.warehouse_id),
+            "company_id": str(self.shop.company.pk),
+            "warehouse_id": str(self.shop.warehouse.pk),
             "marketplace_order_id": order_id,
             "marketplace_order_number": order_id,
             "status": internal_status,

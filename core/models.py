@@ -68,7 +68,7 @@ class UserProfile(TimeStampedModel):
     class Meta:
         db_table = "user_profile"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.user.username} @ {self.company.name} ({self.role})"
 
 
@@ -107,5 +107,5 @@ class MarketplaceConnection(TimeStampedModel):
         db_table = "marketplace_connection"
         unique_together = [("company", "platform", "display_name")]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.company.name} - {self.platform}"

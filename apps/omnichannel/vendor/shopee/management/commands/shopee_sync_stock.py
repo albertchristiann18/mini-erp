@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -8,7 +10,7 @@ from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
 class Command(BaseCommand):
     help = "Sync stock from Shopee for all active shops"
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         for shop in ShopeeShop.objects.filter(is_active=True):
             log = ShopeeSyncLog.objects.create(shop=shop, sync_type="stock", status="running")
             try:

@@ -27,7 +27,7 @@ class TikTokShopSerializer(serializers.ModelSerializer):
             "access_token": {"read_only": True},
         }
 
-    def get_is_token_expired(self, obj):
+    def get_is_token_expired(self, obj: TikTokShop) -> bool:
         return obj.is_token_expired()
 
 

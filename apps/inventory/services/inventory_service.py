@@ -85,7 +85,7 @@ class InventoryService:
         StockMovement.objects.create(
             product_variant=variant,
             warehouse_id=warehouse_id,
-            company_id=variant.company_id,
+            company_id=variant.company.pk,
             quantity=qty,
             movement_type=movement_type,
             balance_before=balance_before,

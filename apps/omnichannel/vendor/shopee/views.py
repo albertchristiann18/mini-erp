@@ -6,6 +6,7 @@ import logging
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from django.db.models import QuerySet
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request
@@ -70,7 +71,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     serializer_class = ShopeeShopSerializer
     permission_classes = [IsStaffOrReadOnly]
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[ShopeeShop]:
         user = self.request.user
         if user.is_authenticated:
             profile = getattr(user, "profile", None)
@@ -79,7 +80,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
         return ShopeeShop.objects.all()
 
     @action(detail=True, methods=["post"], url_path="refresh-token")
-    def refresh_token(self, request: Request, pk=None) -> Response:
+    def refresh_token(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
         from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
 
@@ -91,7 +92,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"], url_path="sync-orders")
-    def sync_orders(self, request: Request, pk=None) -> Response:
+    def sync_orders(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
         from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_orders import (
             sync_orders_for_shop,
@@ -104,7 +105,7 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=["post"], url_path="sync-stock")
-    def sync_stock(self, request: Request, pk=None) -> Response:
+    def sync_stock(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
         from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
 
@@ -120,7 +121,7 @@ class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ShopeeWebhookLogSerializer
     permission_classes = [IsStaffOrReadOnly]
 
-    def get_queryset(self):
+    def get_queryset(self) -> QuerySet[ShopeeWebhookLog]:
         user = self.request.user
         if user.is_authenticated:
             profile = getattr(user, "profile", None)

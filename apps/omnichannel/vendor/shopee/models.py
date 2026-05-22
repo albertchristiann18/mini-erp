@@ -47,16 +47,16 @@ class ShopeeShop(DefaultModel):
     class Meta:
         db_table = "shopee_shop"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.shop_name} ({self.shop_id})"
 
     @property
-    def base_url(self):
+    def base_url(self) -> str:
         if self.is_sandbox:
             return "https://openplatform.sandbox.test-stable.shopee.sg"
         return "https://partner.shopeemobile.com"
 
-    def is_token_expired(self):
+    def is_token_expired(self) -> bool:
         from django.utils import timezone
 
         if not self.token_expires_at:
@@ -83,7 +83,7 @@ class ShopeeWebhookLog(TimeStampedModel):
         db_table = "shopee_webhook_log"
         ordering = ["-cdate"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Webhook {self.event_code} shop={self.shop_id} at {self.cdate}"
 
 

@@ -32,34 +32,34 @@ class TikTokClient:
             "Content-Type": "application/json",
         }
 
-    def get(self, path: str, params: Optional[Dict] = None) -> Dict[str, Any]:
+    def get(self, path: str, params: Optional[Dict] = None) -> Any:
         url = f"{BASE_URL}{path}"
         resp = requests.get(url, params=params, headers=self._get_headers(), timeout=30)
-        return self._handle_response(resp, "GET", path, params=params)
+        return self._handle_response(resp, "GET", path, params=params)  # type: ignore[call-arg]
 
-    def post(self, path: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+    def post(self, path: str, data: Optional[Dict] = None) -> Any:
         url = f"{BASE_URL}{path}"
         resp = requests.post(url, json=data, headers=self._get_headers(), timeout=30)
-        return self._handle_response(resp, "POST", path, data=data)
+        return self._handle_response(resp, "POST", path, data=data)  # type: ignore[call-arg]
 
     def _handle_response(
-        self, resp: requests.Response, method: str, path: str, params=None, data=None
-    ) -> Dict[str, Any]:
-        result = resp.json()
+        self, response: requests.Response, method: str, path: str, **kwargs: Any
+    ) -> Any:
+        result = response.json()
 
         error_code = result.get("code") or result.get("error")
         if error_code == "access_token_invalid" and not self._retried:
             self._retried = True
             self.refresh_access_token()
             if method == "GET":
-                return self.get(path, params)
+                return self.get(path, kwargs.get("params"))
             else:
-                return self.post(path, data)
+                return self.post(path, kwargs.get("data"))
 
-        if not resp.ok:
+        if not response.ok:
             raise TikTokAPIError(
-                str(error_code or resp.status_code),
-                result.get("message", resp.text),
+                str(error_code or response.status_code),
+                result.get("message", response.text),
             )
 
         if error_code and str(error_code) != "0":
@@ -68,7 +68,7 @@ class TikTokClient:
         self._retried = False
         return result.get("data", result)
 
-    def refresh_access_token(self):
+    def refresh_access_token(self) -> None:
         """Use refresh_token to get a new access_token."""
         url = f"{BASE_URL}/v2/oauth/token/"
         body = {

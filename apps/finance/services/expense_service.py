@@ -1,3 +1,5 @@
+from datetime import date
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, QuerySet, Sum
@@ -30,8 +32,8 @@ class ExpenseService:
     def get_expenses_by_period(
         self,
         company_id: str,
-        start_date,
-        end_date,
+        start_date: date,
+        end_date: date,
         category_id: str | None = None,
     ) -> QuerySet:
         """Return queryset filtered by date range and optionally category."""
@@ -47,8 +49,8 @@ class ExpenseService:
     def get_expense_summary_by_category(
         self,
         company_id: str,
-        start_date,
-        end_date,
+        start_date: date,
+        end_date: date,
     ) -> list[dict]:
         """
         Return list of dicts: [{category_name, total_amount, count}]
