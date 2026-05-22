@@ -1,7 +1,8 @@
 # mypy: disable-error-code="no-untyped-call"
 import factory
 
-from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeWebhookLog
+from apps.inventory.factories import ProductVariantFactory
+from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeStockSyncLog, ShopeeWebhookLog
 from core.factories import CompanyFactory
 
 
@@ -34,3 +35,20 @@ class ShopeeWebhookLogFactory(factory.django.DjangoModelFactory):
         }
     )
     processed = False
+
+
+class ShopeeStockSyncLogFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = ShopeeStockSyncLog
+
+    company = factory.SubFactory(CompanyFactory)
+    shop = factory.SubFactory(ShopeeShopFactory)
+    variant = factory.SubFactory(ProductVariantFactory)
+    sku_variant_code = factory.Sequence(lambda n: f"SKU-VAR-{n:04d}")
+    quantity_synced = 10
+    success = True
+    error_message = ""
+    sync_type = ShopeeStockSyncLog.SyncType.SINGLE
+    shopee_item_id = factory.Sequence(lambda n: 100000 + n)
+    shopee_model_id = factory.Sequence(lambda n: 200000 + n)
+    shopee_response = factory.LazyFunction(dict)
