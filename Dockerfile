@@ -38,6 +38,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Copy uv binary from builder
+COPY --from=builder /bin/uv /bin/uv
+
 # Copy the Virtual Environment and code from the builder stage
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/. /app/

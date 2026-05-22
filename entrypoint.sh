@@ -25,6 +25,11 @@ if u and e and p:
     if not User.objects.filter(username=u).exists():
         User.objects.create_superuser(username=u, email=e, password=p)
         print(f'Superuser {u!r} created.')
+        
+        from core.models import Company, UserProfile
+        company, _ = Company.objects.get_or_create(name='Test Company', defaults={'is_active': True})
+        UserProfile.objects.create(user=User.objects.get(username=u), company=company, role='admin')
+        print(f'superuser profile created.')
     else:
         print(f'Superuser {u!r} already exists.')
 else:

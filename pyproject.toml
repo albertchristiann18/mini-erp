@@ -12,7 +12,9 @@ dependencies = [
     "django-storages>=1.14.6",
     "django-stubs>=5.2.7",
     "django-ulid>=0.0.4",
+    "django-cors-headers>=4.3.1",
     "djangorestframework>=3.16.1",
+    "djangorestframework-simplejwt>=5.3.1",
     "factory-boy>=3.3.3",
     "gunicorn>=23.0.0",
     "mypy>=1.18.2",
@@ -26,6 +28,7 @@ dependencies = [
     "ruff>=0.14.3",
     "sqlparse>=0.5.3",
     "uvicorn>=0.38.0",
+    "requests>=2.33.1",
 ]
 
 [tool.ruff]

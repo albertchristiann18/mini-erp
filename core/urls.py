@@ -19,19 +19,55 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.routers import DefaultRouter
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from core import views
 
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def me_view(request: Request) -> Response:
+    user = request.user
+    profile = getattr(user, "profile", None)
+    return Response(
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "is_staff": user.is_staff,
+            "company_id": str(profile.company_id) if profile else None,
+            "company_name": profile.company.name if profile else None,
+            "role": profile.role if profile else None,
+        }
+    )
+
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+    path("api/profile/", me_view),
     path("", include("apps.inventory.urls")),
     path("", include("apps.purchasing.urls")),
+    path("", include("apps.sales.urls")),
+    path("", include("apps.finance.urls")),
+    path("", include("apps.omnichannel.vendor.shopee.urls")),
+    path("", include("apps.omnichannel.vendor.tiktok.urls")),
 ]
 
 router = DefaultRouter()
 router.register(r"company", views.CompanyViewSet)
 router.register(r"marketplace", views.MarketplaceViewSet)
+router.register(
+    r"marketplace-connections",
+    views.MarketplaceConnectionViewSet,
+    basename="marketplace-connection",
+)
 
 urlpatterns += router.urls
 

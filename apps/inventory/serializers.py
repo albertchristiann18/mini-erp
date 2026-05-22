@@ -5,6 +5,7 @@ from rest_framework import serializers
 from apps.inventory.models import (
     Category,
     Product,
+    ProductPhoto,
     ProductVariant,
     ProductVariantMarketplace,
     Warehouse,
@@ -26,8 +27,20 @@ class WarehouseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Warehouse
-        # '__all__' includes all fields: id, name, category_code, description, is_active
         fields = "__all__"
+
+
+class ProductPhotoSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductPhoto
+        fields = ["id", "image_url", "order", "is_primary"]
+
+    def get_image_url(self, obj: ProductPhoto) -> Any:
+        if obj.image:
+            return obj.image.url
+        return None
 
 
 class VariantMarketplaceSerializer(serializers.ModelSerializer):
@@ -55,21 +68,20 @@ class VariantSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    # Keep your read-only ID fields
     company_id = serializers.UUIDField(source="company.id", read_only=True)
     category_id = serializers.UUIDField(source="category.id", read_only=True)
+    category_name = serializers.CharField(source="category.name", read_only=True)
 
-    # Add the nested variants
-    # The name 'variants' must match the related_name in your ProductVariant model
     variants = VariantSerializer(many=True, read_only=True)
+    photos = ProductPhotoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
-        # Explicitly listing fields is often safer when nesting
         fields = [
             "id",
             "company_id",
             "category_id",
+            "category_name",
             "name",
             "description",
             "sku_code",
@@ -82,7 +94,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "width",
             "height",
             "is_active",
-            "variants",  # Include the nested field here
+            "variants",
+            "photos",
         ]
 
 
@@ -117,6 +130,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
     company_id = serializers.CharField(write_only=True)
     category_id = serializers.CharField(write_only=True)
     variants = VariantCreateSerializer(many=True)
+    description = serializers.CharField(required=True, min_length=25, max_length=5000)
 
     class Meta:
         model = Product
@@ -144,3 +158,40 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         if not Category.objects.filter(id=value).exists():
             raise serializers.ValidationError("Category not found")
         return value
+
+
+class ProductVariantStockSerializer(serializers.ModelSerializer):
+    product = serializers.CharField(source="product.id", read_only=True)
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_sku = serializers.CharField(source="product.sku_code", read_only=True)
+    category_name = serializers.CharField(source="product.category.name", read_only=True)
+    physical_qty = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductVariant
+        fields = [
+            "id",
+            "name",
+            "sku_variant_code",
+            "product",
+            "product_name",
+            "product_sku",
+            "category_name",
+            "base_price",
+            "total_available_qty",
+            "physical_qty",
+            "is_active",
+        ]
+
+    def get_physical_qty(self, obj: ProductVariant) -> int:
+        req = self.context.get("request")
+        # DRF wraps the request with .query_params; plain WSGIRequest uses .GET
+        params = getattr(req, "query_params", None) or getattr(req, "GET", {})
+        warehouse_id = params.get("warehouse")
+        if warehouse_id:
+            stock = obj.warehouse_stocks.filter(warehouse_id=warehouse_id).first()
+            return stock.physical_qty if stock else 0
+        from django.db.models import Sum
+
+        result = obj.warehouse_stocks.aggregate(total=Sum("physical_qty"))
+        return result["total"] or 0

@@ -69,6 +69,16 @@ class PurchaseOrderService:
         old_status = po.status
         new_status: str | None = data.get("status")
 
+        # Enforce status transitions
+        if new_status and new_status != old_status:
+            allowed = self.STATUS_TRANSITIONS.get(old_status, [])
+            if new_status not in allowed and new_status != PurchaseOrder.POStatus.CANCELLED:
+                raise ValidationError(
+                    {
+                        "status": f"Cannot transition from {old_status} to {new_status}. Allowed: {allowed}"
+                    }
+                )
+
         order_details = data.get("order_details", [])
 
         if new_status not in [PurchaseOrder.POStatus.CANCELLED]:
@@ -210,6 +220,11 @@ class PurchaseOrderService:
                         "note": f"Stock movement for PO {po.purchase_order_number} purchase",
                     }
                 )
+
+            # Create AccountsPayable when PO moves to ORDERED
+            from apps.finance.services.accounts_payable_service import AccountsPayableService
+
+            AccountsPayableService().create_payable_from_po(po)
 
         elif new_status == PurchaseOrder.POStatus.DELIVERED:
             for item in order_details:
@@ -483,3 +498,12 @@ class PurchaseOrderService:
         if update_fields:
             update_fields.append("udate")
             po.save(update_fields=update_fields)
+
+        # Sync AP total_amount if it exists
+        try:
+            ap = po.payable
+            if ap.total_amount != po.total_amount:
+                ap.total_amount = po.total_amount
+                ap.save(update_fields=["total_amount", "udate"])
+        except Exception:
+            pass  # AP may not exist yet (DRAFT status)
