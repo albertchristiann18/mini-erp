@@ -239,6 +239,9 @@ class ProductVariantMarketplace(DefaultModel):
     selling_price = models.BigIntegerField()
     discounted_price = models.BigIntegerField(null=True, blank=True)
 
+    shopee_item_id = models.BigIntegerField(null=True, blank=True)
+    shopee_model_id = models.BigIntegerField(null=True, blank=True)
+
     is_active = models.BooleanField(default=True)
 
     class Meta:

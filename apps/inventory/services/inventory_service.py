@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from typing import Optional
 
@@ -5,6 +6,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from django_ulid.models import ULIDField
+
+logger = logging.getLogger(__name__)
 
 from apps.inventory.models import (
     ProductCogs,
@@ -65,39 +68,36 @@ class InventoryService:
                 warehouse_id=warehouse_id,
             )
 
-        balance_before = variant.total_available_qty
-
         if movement_type == StockMovement.MovementType.PURCHASE:
             pvw.incoming_qty += qty
             pvw.save(update_fields=["incoming_qty"])
-            return
-        elif movement_type == StockMovement.MovementType.OUTBOUND:
-            if pvw.physical_qty < qty:
-                raise ValidationError(
-                    f"Insufficient stock. Available: {pvw.physical_qty}, requested: {qty}."
-                )
-            pvw.physical_qty -= qty
-            variant.total_available_qty -= qty
-        else:
-            pvw.physical_qty += qty
-            variant.total_available_qty += qty
-
-        StockMovement.objects.create(
-            product_variant=variant,
-            warehouse_id=warehouse_id,
-            company_id=variant.company.pk,
-            quantity=qty,
-            movement_type=movement_type,
-            balance_before=balance_before,
-            balance_after=variant.total_available_qty,
-            reference_number=reference_number,
-            note=note,
-        )
-
-        pvw.save(update_fields=["physical_qty"])
-        variant.save(update_fields=["total_available_qty"])
-
         return
+
+    def _trigger_shopee_sync(self, variant_id: str, company_id: str) -> None:
+        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
+        from core.models import MarketplaceConnection
+
+        connections = MarketplaceConnection.objects.filter(
+            platform="SHOPEE",
+            is_active=True,
+            company_id=company_id,
+        ).select_related("shopee_shop")
+
+        if not connections.exists():
+            return
+
+        service = ShopeeStockSyncService()
+        for connection in connections:
+            if connection.shopee_shop:
+                try:
+                    service.sync_single_variant(variant_id, connection.shopee_shop)
+                except Exception:
+                    logger.warning(
+                        "Shopee sync trigger failed for variant %s on shop %s",
+                        variant_id,
+                        connection.shopee_shop.shop_id,
+                        exc_info=True,
+                    )
 
     @transaction.atomic
     def record_multiple_stock_movements(
