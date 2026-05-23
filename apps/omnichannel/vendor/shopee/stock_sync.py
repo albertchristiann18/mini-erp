@@ -42,10 +42,12 @@ class ShopeeStockSyncService:
             qty = self._get_available_qty(variant_id)
 
             client = ShopeeClient(shop)
-            response = client.update_stock(
+            payload = self._build_stock_payload(
                 listing.shopee_item_id,
-                [{"model_id": listing.shopee_model_id, "normal_stock": qty}],
+                listing.shopee_model_id,
+                qty,
             )
+            response = client.update_stock(payload["item_id"], payload["stock_list"])
 
             self._write_log(
                 shop=shop,
@@ -63,6 +65,18 @@ class ShopeeStockSyncService:
         except ProductVariant.DoesNotExist:
             return False
         except ShopeeAPIError as e:
+            variant_obj = ProductVariant.objects.filter(id=variant_id).first()
+            self._write_log(
+                shop=shop,
+                variant_id=variant_id,
+                sku=variant_obj.sku_variant_code if variant_obj else "",
+                qty=0,
+                success=False,
+                sync_type=ShopeeStockSyncLog.SyncType.SINGLE,
+                error_message=str(e),
+            )
+            return False
+        except Exception as e:
             variant_obj = ProductVariant.objects.filter(id=variant_id).first()
             self._write_log(
                 shop=shop,
@@ -146,7 +160,7 @@ class ShopeeStockSyncService:
                             sync_type=ShopeeStockSyncLog.SyncType.FULL,
                             error_message=str(e),
                         )
-                    errors.append({"sku": v["sku"], "error": str(e)})
+                    errors.extend([{"sku": v["sku"], "error": str(e)} for v in chunk])
 
         return {
             "success": success_count,
@@ -207,19 +221,3 @@ class ShopeeStockSyncService:
                 "Failed to write ShopeeStockSyncLog for variant %s",
                 sku,
             )
-
-
-class ShopeeStockSyncer:
-    """Legacy stub — kept for backward compatibility with views."""
-
-    def __init__(self, shop: ShopeeShop):
-        self.shop = shop
-        self.client = ShopeeClient(shop)
-
-    def push_stock_to_shopee(self) -> int:
-        if not self.shop.marketplace:
-            return 0
-        return 0
-
-    def pull_stock_from_shopee(self) -> int:
-        return 0

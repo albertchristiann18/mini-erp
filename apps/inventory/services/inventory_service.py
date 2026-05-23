@@ -1,6 +1,5 @@
 import logging
 from decimal import Decimal
-from typing import Optional
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -26,8 +25,8 @@ class InventoryService:
         warehouse_id: int,
         qty: int,  # need to be absolute value (not negative)
         movement_type: str,
-        reference_number: Optional[str] = None,
-        note: Optional[str] = None,
+        reference_number: str | None = None,
+        note: str | None = None,
     ) -> None:
         """
         Args:
@@ -68,10 +67,43 @@ class InventoryService:
                 warehouse_id=warehouse_id,
             )
 
+        company_id = variant.company_id  # type: ignore[attr-defined]
+
         if movement_type == StockMovement.MovementType.PURCHASE:
             pvw.incoming_qty += qty
             pvw.save(update_fields=["incoming_qty"])
-        return
+        elif movement_type in (
+            StockMovement.MovementType.OUTBOUND,
+            StockMovement.MovementType.INBOUND,
+            StockMovement.MovementType.ADJUSTMENT,
+        ):
+            if movement_type == StockMovement.MovementType.OUTBOUND:
+                if pvw.available_qty < qty:
+                    raise ValidationError(
+                        f"Insufficient stock for variant {variant_id}. "
+                        f"Available: {pvw.available_qty}, requested: {qty}"
+                    )
+                stock_qty = -qty
+                bal_before = pvw.physical_qty
+                pvw.physical_qty -= qty
+            else:
+                stock_qty = qty
+                bal_before = pvw.physical_qty
+                pvw.physical_qty += qty
+            pvw.save(update_fields=["physical_qty"])
+            StockMovement.objects.create(
+                company_id=company_id,
+                product_variant=variant,
+                warehouse_id=warehouse_id,
+                movement_type=movement_type,
+                quantity=stock_qty,
+                reference_number=reference_number or "",
+                note=note or "",
+                balance_before=bal_before,
+                balance_after=pvw.physical_qty,
+                field_change="physical_qty",
+            )
+        self._trigger_shopee_sync(str(variant.id), str(company_id))
 
     def _trigger_shopee_sync(self, variant_id: str, company_id: str) -> None:
         from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
@@ -106,8 +138,8 @@ class InventoryService:
         company_id: int,
         data: list[dict],
         map_product_variant: dict,
-        reference_number: Optional[str] = None,
-        movement_type: Optional[str] = None,
+        reference_number: str | None = None,
+        movement_type: str | None = None,
     ) -> None:
         """Create stock movement records.
 

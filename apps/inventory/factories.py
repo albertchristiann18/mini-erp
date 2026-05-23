@@ -7,9 +7,10 @@ from apps.inventory.models import (
     Product,
     ProductCogs,
     ProductVariant,
+    ProductVariantMarketplace,
     ProductVariantWarehouse,
 )
-from core.factories import CompanyFactory, WarehouseFactory
+from core.factories import CompanyFactory, MarketplaceFactory, WarehouseFactory
 
 
 class ProductFactory(factory.django.DjangoModelFactory):
@@ -77,3 +78,18 @@ class ProductVariantWarehouseFactory(factory.django.DjangoModelFactory):
     outgoing_qty = 0
     physical_qty = 0
     checkout_qty = 0
+
+
+class ProductVariantMarketplaceFactory(factory.django.DjangoModelFactory):
+    """Factory for creating test ProductVariantMarketplace instances"""
+
+    class Meta:
+        model = ProductVariantMarketplace
+
+    product_variant = factory.SubFactory(ProductVariantFactory)  # type: ignore[no-untyped-call]
+    marketplace = factory.SubFactory(MarketplaceFactory)  # type: ignore[no-untyped-call]
+    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
+    selling_price = 10000
+    is_active = True
+    shopee_item_id = None
+    shopee_model_id = None

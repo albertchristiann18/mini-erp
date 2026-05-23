@@ -15,9 +15,10 @@ from apps.inventory.factories import (
     ProductCogsFactory,
     ProductFactory,
     ProductVariantFactory,
+    ProductVariantMarketplaceFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.inventory.models import ProductVariant, ProductVariantMarketplace
+from apps.inventory.models import ProductVariant
 from apps.inventory.services.inventory_service import InventoryService
 from apps.omnichannel.vendor.shopee.client import ShopeeClient
 from apps.omnichannel.vendor.shopee.exceptions import ShopeeAPIError, ShopeeAuthError
@@ -30,8 +31,12 @@ from apps.omnichannel.vendor.shopee.models import ShopeeStockSyncLog, ShopeeWebh
 from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
 from apps.omnichannel.vendor.shopee.utils import sign_shop_api
 from apps.sales.models import SalesOrder
-from core.factories import CompanyFactory, MarketplaceFactory, WarehouseFactory
-from core.models import MarketplaceConnection
+from core.factories import (
+    CompanyFactory,
+    MarketplaceConnectionFactory,
+    MarketplaceFactory,
+    WarehouseFactory,
+)
 
 
 class ShopeeWebhookAPITest(APITestCase):
@@ -517,10 +522,10 @@ class TestShopeeStockSyncService(TestCase):
             physical_qty=physical_qty,
             checkout_qty=checkout_qty,
         )
-        ProductVariantMarketplace.objects.create(
-            company=self.company,
+        ProductVariantMarketplaceFactory(
             product_variant=variant,
             marketplace=self.marketplace,
+            company=self.company,
             selling_price=10000,
             is_active=listing_active,
             shopee_item_id=shopee_item_id,
@@ -611,13 +616,13 @@ class TestShopeeStockSyncService(TestCase):
                 company=self.company,
                 physical_qty=5,
             )
-            ProductVariantMarketplace.objects.create(
-                company=self.company,
+            ProductVariantMarketplaceFactory(
                 product_variant=variant,
                 marketplace=self.marketplace,
+                company=self.company,
                 selling_price=10000,
                 is_active=True,
-                shopee_item_id=1000 + (i % 3),
+                shopee_item_id=1000,
                 shopee_model_id=200000 + i,
             )
         result = self.service.sync_all_variants(self.shop)
@@ -653,10 +658,10 @@ class TestShopeeStockSyncService(TestCase):
                 company=self.company,
                 physical_qty=5,
             )
-            ProductVariantMarketplace.objects.create(
-                company=self.company,
+            ProductVariantMarketplaceFactory(
                 product_variant=variant,
                 marketplace=self.marketplace,
+                company=self.company,
                 selling_price=10000,
                 is_active=True,
                 shopee_item_id=1001 + i,
@@ -724,7 +729,7 @@ class TestShopeeStockSyncService(TestCase):
         mock_sync: MagicMock,
     ) -> None:
         variant = self._create_variant_with_stock()
-        MarketplaceConnection.objects.create(
+        MarketplaceConnectionFactory(
             company=self.company,
             platform="SHOPEE",
             is_active=True,
