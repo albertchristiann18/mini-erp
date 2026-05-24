@@ -158,6 +158,12 @@ class ShopeeClient:
             {"item_id_list": ",".join(str(i) for i in item_id_list)},
         )
 
+    def get_model_list(self, item_id: int) -> dict[str, Any]:
+        return self.get(
+            "/api/v2/product/get_model_list",
+            {"item_id": item_id},
+        )
+
     # ── Backward-compatible wrappers ─────────────────────────────────────────
 
     def get_order_detail(self, order_sn_list: list[str]) -> dict[str, Any]:

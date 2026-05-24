@@ -18,9 +18,15 @@ from apps.inventory.factories import (
     ProductVariantMarketplaceFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement
+from apps.inventory.models import (
+    ProductVariant,
+    ProductVariantMarketplace,
+    ProductVariantWarehouse,
+    StockMovement,
+)
 from apps.inventory.services.inventory_service import InventoryService
 from apps.omnichannel.vendor.shopee.client import ShopeeClient
+from apps.omnichannel.vendor.shopee.product_match import ShopeeProductMatchService
 from apps.omnichannel.vendor.shopee.exceptions import ShopeeAPIError, ShopeeAuthError
 from apps.omnichannel.vendor.shopee.factories import (
     ShopeeShopFactory,
@@ -1110,3 +1116,111 @@ class TestShopeeManagementCommand(TestCase):
         log = ShopeeSyncLog.objects.get(shop=shop)
         self.assertEqual(log.status, "failed")
         self.assertIn("boom", log.error_message)
+
+
+class TestShopeeProductMatch(TestCase):
+    def test_match_writes_shopee_ids_for_multivariant_item(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+
+        # DB trigger auto-generates sku_variant_code from Product.sku_code + variant_values.
+        # We set variant_values={'1': 'RED'} so the generated sku_variant_code is parent_sku + '-RED'.
+        product = ProductFactory(company=company)
+        variant = ProductVariantFactory(
+            product=product, company=company, variant_values={"1": "RED"}
+        )
+        variant.refresh_from_db()  # DB trigger sets sku_variant_code
+        model_sku = variant.sku_variant_code  # e.g. "CAT-0000-001-RED"
+
+        pvm = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        with (
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_list",
+                return_value={"item_id_list": [111], "has_next_page": False},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_base_info",
+                return_value={"item_list": [{"item_id": 111, "item_sku": "SKU001"}]},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_model_list",
+                return_value={"model": [{"model_id": 222, "model_sku": model_sku}]},
+            ),
+        ):
+            result = ShopeeProductMatchService().match_products_for_shop(shop)
+
+        pvm.refresh_from_db()
+        self.assertEqual(pvm.shopee_item_id, 111)
+        self.assertEqual(pvm.shopee_model_id, 222)
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["errors"], [])
+
+    def test_match_skips_when_no_variant_found(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+
+        product = ProductFactory(company=company)
+        variant = ProductVariantFactory(
+            product=product, company=company, variant_values={"1": "BLUE"}
+        )
+
+        pvm = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        with (
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_list",
+                return_value={"item_id_list": [111], "has_next_page": False},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_base_info",
+                return_value={"item_list": [{"item_id": 111, "item_sku": "SKU001"}]},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_model_list",
+                return_value={"model": [{"model_id": 222, "model_sku": "NONEXISTENT-SKU"}]},
+            ),
+        ):
+            result = ShopeeProductMatchService().match_products_for_shop(shop)
+
+        pvm.refresh_from_db()
+        self.assertIsNone(pvm.shopee_item_id)
+        self.assertGreaterEqual(result["skipped"], 1)
+
+    def test_match_command_creates_success_log(self):
+        shop = ShopeeShopFactory(is_active=True)
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_match.ShopeeProductMatchService.match_products_for_shop",
+            return_value={"matched": 3, "skipped": 1, "errors": []},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_match_products import (
+                Command,
+            )
+
+            Command().handle()
+
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_match")
+        self.assertEqual(log.status, "success")
+        self.assertEqual(log.records_synced, 3)
