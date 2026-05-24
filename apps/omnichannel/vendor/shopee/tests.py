@@ -210,6 +210,127 @@ class ShopeeOrderSyncTest(TestCase):
         self.assertEqual(SalesOrder.objects.filter(marketplace_order_id="SH_ORDER_DUP").count(), 1)
 
 
+class TestShopeeOrderWebhook(TestCase):
+    def setUp(self):
+        self.company = CompanyFactory()
+        self.warehouse = WarehouseFactory(company=self.company)
+        self.marketplace = MarketplaceFactory()
+        self.product = ProductFactory(company=self.company)
+        self.variant = ProductVariantFactory(
+            product=self.product,
+            company=self.company,
+        )
+        self.variant.refresh_from_db()
+        self.shop = ShopeeShopFactory(
+            company=self.company,
+            marketplace=self.marketplace,
+            default_warehouse=self.warehouse,
+        )
+
+    def _order_detail_payload(self, sku: str, order_sn: str = "SH_WH_001") -> dict:
+        return {
+            "order_list": [
+                {
+                    "order_sn": order_sn,
+                    "order_status": "READY_TO_SHIP",
+                    "create_time": int(timezone.now().timestamp()),
+                    "actual_shipping_fee": 10000,
+                    "shipping_carrier": "JNE",
+                    "tracking_number": "TRK001",
+                    "recipient_address": {
+                        "name": "John Doe",
+                        "phone": "08123456789",
+                        "full_address": "Jl. Test 123",
+                        "city": "Jakarta",
+                        "state": "DKI Jakarta",
+                    },
+                    "item_list": [
+                        {
+                            "item_id": 12345,
+                            "model_sku": sku,
+                            "model_original_price": 100000,
+                            "model_quantity_purchased": 1,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    @patch("apps.omnichannel.vendor.shopee.order_sync.ShopeeClient")
+    def test_webhook_end_to_end_creates_sales_order(self, MockClient):
+        """POST webhook code 3 → order fetched from Shopee API → SalesOrder created in DB."""
+        sku = self.variant.sku_variant_code
+        MockClient.return_value.get_order_detail.return_value = self._order_detail_payload(sku)
+
+        payload = json.dumps(
+            {
+                "code": 3,
+                "shop_id": self.shop.shop_id,
+                "ordersn": "SH_WH_001",
+                "status": "READY_TO_SHIP",
+            }
+        )
+        resp = self.client.post(
+            "/shopee/webhook/",
+            data=payload,
+            content_type="application/json",
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(SalesOrder.objects.filter(marketplace_order_id="SH_WH_001").exists())
+
+    @patch("apps.omnichannel.vendor.shopee.order_sync.ShopeeClient")
+    def test_order_upsert_source_platform_is_shopee(self, MockClient):
+        """SalesOrder created from Shopee sync has source_platform=SHOPEE, not MANUAL."""
+        sku = self.variant.sku_variant_code
+        MockClient.return_value.get_order_detail.return_value = self._order_detail_payload(
+            sku, "SH_PLAT_001"
+        )
+
+        from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
+
+        syncer = ShopeeOrderSyncer(self.shop)
+        so = syncer.sync_order_by_sn("SH_PLAT_001")
+
+        self.assertIsNotNone(so)
+        self.assertEqual(so.source_platform, SalesOrder.SourcePlatform.SHOPEE)
+
+    def test_find_variant_restricted_to_company(self):
+        """_find_variant returns None for a variant that belongs to a different company."""
+        other_company = CompanyFactory()
+        other_variant = ProductVariantFactory(company=other_company)
+        other_variant.refresh_from_db()
+        sku = other_variant.sku_variant_code
+
+        from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
+
+        syncer = ShopeeOrderSyncer(self.shop)  # self.shop belongs to self.company
+        result = syncer._find_variant({"model_sku": sku})
+
+        self.assertIsNone(result)
+
+    @patch("apps.omnichannel.vendor.shopee.order_sync.ShopeeClient")
+    def test_order_upsert_skips_no_default_warehouse(self, MockClient):
+        """sync_order_by_sn returns None when shop has no default_warehouse configured."""
+        sku = self.variant.sku_variant_code
+        shop_no_wh = ShopeeShopFactory(
+            company=self.company,
+            marketplace=self.marketplace,
+            default_warehouse=None,
+        )
+        MockClient.return_value.get_order_detail.return_value = self._order_detail_payload(
+            sku, "SH_NOWH_001"
+        )
+
+        from apps.omnichannel.vendor.shopee.order_sync import ShopeeOrderSyncer
+
+        syncer = ShopeeOrderSyncer(shop_no_wh)
+        so = syncer.sync_order_by_sn("SH_NOWH_001")
+
+        self.assertIsNone(so)
+        self.assertFalse(SalesOrder.objects.filter(marketplace_order_id="SH_NOWH_001").exists())
+
+
 class ShopeeShopAPITest(APITestCase):
     def setUp(self):
         self.client = APIClient()
