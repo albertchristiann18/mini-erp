@@ -18,7 +18,7 @@ from apps.inventory.factories import (
     ProductVariantMarketplaceFactory,
     ProductVariantWarehouseFactory,
 )
-from apps.inventory.models import ProductVariant
+from apps.inventory.models import ProductVariant, ProductVariantWarehouse, StockMovement
 from apps.inventory.services.inventory_service import InventoryService
 from apps.omnichannel.vendor.shopee.client import ShopeeClient
 from apps.omnichannel.vendor.shopee.exceptions import ShopeeAPIError, ShopeeAuthError
@@ -30,6 +30,14 @@ from apps.omnichannel.vendor.shopee.factories import (
 from apps.omnichannel.vendor.shopee.models import ShopeeStockSyncLog, ShopeeWebhookLog
 from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
 from apps.omnichannel.vendor.shopee.utils import sign_shop_api
+from apps.omnichannel.vendor.shopee.models import (
+    ShopeeStockSyncLog,
+    ShopeeSyncLog,
+    ShopeeWebhookLog,
+)
+from apps.purchasing.factories import PurchaseOrderDetailFactory, PurchaseOrderFactory
+from apps.purchasing.models import PurchaseOrder
+from apps.purchasing.services.purchasing_service import PurchaseOrderService
 from apps.sales.models import SalesOrder
 from core.factories import (
     CompanyFactory,
@@ -742,6 +750,133 @@ class TestShopeeStockSyncService(TestCase):
             self.fail("_trigger_shopee_sync raised unexpectedly")
         mock_sync.assert_called_once()
 
+    # ── sync_batch tests ────────────────────────────────────
+
+    @patch.object(ShopeeClient, "update_stock", return_value={"success": True})
+    def test_sync_batch_batches_correctly(self, mock_update: MagicMock) -> None:
+        product = ProductFactory(company=self.company)
+        warehouse = WarehouseFactory(company=self.company, is_marketplace_visible=True)
+        variant_ids = []
+        for i in range(51):
+            variant = ProductVariantFactory(
+                product=product,
+                company=self.company,
+                variant_values={"1": f"B{i:04d}"},
+            )
+            ProductVariantWarehouseFactory(
+                product_variant=variant,
+                warehouse=warehouse,
+                company=self.company,
+                physical_qty=5,
+            )
+            ProductVariantMarketplaceFactory(
+                product_variant=variant,
+                marketplace=self.marketplace,
+                company=self.company,
+                selling_price=10000,
+                is_active=True,
+                shopee_item_id=9999,
+                shopee_model_id=300000 + i,
+            )
+            variant_ids.append(str(variant.id))
+        result = self.service.sync_batch(variant_ids, self.shop)
+        self.assertEqual(result["synced"], 51)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["failed_variant_ids"], [])
+        self.assertEqual(mock_update.call_count, 2)
+
+    def test_sync_batch_partial_failure(self, *args) -> None:
+        product = ProductFactory(company=self.company)
+        warehouse = WarehouseFactory(company=self.company, is_marketplace_visible=True)
+        variant_ids = []
+        for i in range(3):
+            variant = ProductVariantFactory(
+                product=product,
+                company=self.company,
+                variant_values={"1": f"PF{i:04d}"},
+            )
+            ProductVariantWarehouseFactory(
+                product_variant=variant,
+                warehouse=warehouse,
+                company=self.company,
+                physical_qty=5,
+            )
+            ProductVariantMarketplaceFactory(
+                product_variant=variant,
+                marketplace=self.marketplace,
+                company=self.company,
+                selling_price=10000,
+                is_active=True,
+                shopee_item_id=7000 + i,
+                shopee_model_id=400000 + i,
+            )
+            variant_ids.append(str(variant.id))
+
+        with patch.object(
+            ShopeeClient,
+            "update_stock",
+            side_effect=[
+                {"success": True},
+                ShopeeAPIError(400, "STOCK_FAIL", "failed"),
+                {"success": True},
+            ],
+        ):
+            result = self.service.sync_batch(variant_ids, self.shop)
+
+        self.assertEqual(result["synced"], 2)
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(len(result["failed_variant_ids"]), 1)
+
+    # ── post-hook tests ─────────────────────────────────────
+
+    @patch.object(ShopeeStockSyncService, "sync_single_variant", return_value=True)
+    def test_post_hook_fires_on_stock_movement(self, mock_sync: MagicMock) -> None:
+        variant = self._create_variant_with_stock(physical_qty=20)
+        warehouse = ProductVariantWarehouse.objects.get(product_variant=variant)
+        MarketplaceConnectionFactory(
+            company=self.company,
+            platform="SHOPEE",
+            is_active=True,
+            shopee_shop=self.shop,
+        )
+        service = InventoryService()
+        service.record_single_stock_movement(
+            variant_id=variant.id,
+            warehouse_id=warehouse.warehouse_id,
+            qty=5,
+            movement_type=StockMovement.MovementType.OUTBOUND,
+        )
+        mock_sync.assert_called_once_with(str(variant.id), self.shop)
+
+    @patch.object(
+        ShopeeStockSyncService,
+        "sync_single_variant",
+        side_effect=Exception("Catastrophic sync failure"),
+    )
+    def test_post_hook_isolation_on_sync_exception(self, mock_sync: MagicMock) -> None:
+        from apps.inventory.models import StockMovement
+
+        variant = self._create_variant_with_stock(physical_qty=20)
+        warehouse = ProductVariantWarehouse.objects.get(product_variant=variant)
+        MarketplaceConnectionFactory(
+            company=self.company,
+            platform="SHOPEE",
+            is_active=True,
+            shopee_shop=self.shop,
+        )
+        movement_count_before = StockMovement.objects.count()
+        service = InventoryService()
+        try:
+            service.record_single_stock_movement(
+                variant_id=variant.id,
+                warehouse_id=warehouse.warehouse_id,
+                qty=5,
+                movement_type=StockMovement.MovementType.OUTBOUND,
+            )
+        except Exception:
+            self.fail("record_single_stock_movement raised unexpectedly when sync failed")
+        self.assertEqual(StockMovement.objects.count(), movement_count_before + 1)
+
 
 class TestShopeeStockSyncLogModel(TestCase):
     """ShopeeStockSyncLog model creation and constraints."""
@@ -818,3 +953,160 @@ class TestShopeeStockSyncLogModel(TestCase):
             ).count(),
             1,
         )
+
+
+class TestPODeliveredShopeeSync(TestCase):
+    def test_po_delivered_triggers_sync_for_affected_variants(self):
+        company = CompanyFactory()
+        warehouse = WarehouseFactory(company=company)
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(company=company, marketplace=marketplace, is_active=True)
+        MarketplaceConnectionFactory(
+            company=company,
+            platform="SHOPEE",
+            is_active=True,
+            shopee_shop=shop,
+        )
+        variant = ProductVariantFactory(company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+        ProductVariantWarehouseFactory(
+            product_variant=variant,
+            warehouse=warehouse,
+            company=company,
+            physical_qty=10,
+        )
+        po = PurchaseOrderFactory(
+            company=company,
+            warehouse=warehouse,
+            status=PurchaseOrder.POStatus.SHIPPED,
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=variant,
+            company=company,
+            ordered_qty=5,
+        )
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_single_variant",
+            return_value=True,
+        ) as mock_sync:
+            PurchaseOrderService().update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(variant.id),
+                            "received_qty": 5,
+                            "ordered_qty": 5,
+                            "received_date": timezone.now().date().isoformat(),
+                        }
+                    ],
+                },
+            )
+
+        self.assertTrue(mock_sync.called)
+
+    def test_po_delivered_sync_exception_does_not_rollback_po(self):
+        company = CompanyFactory()
+        warehouse = WarehouseFactory(company=company)
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(company=company, marketplace=marketplace, is_active=True)
+        MarketplaceConnectionFactory(
+            company=company,
+            platform="SHOPEE",
+            is_active=True,
+            shopee_shop=shop,
+        )
+        variant = ProductVariantFactory(company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+        ProductVariantWarehouseFactory(
+            product_variant=variant,
+            warehouse=warehouse,
+            company=company,
+            physical_qty=10,
+        )
+        po = PurchaseOrderFactory(
+            company=company,
+            warehouse=warehouse,
+            status=PurchaseOrder.POStatus.SHIPPED,
+        )
+        detail = PurchaseOrderDetailFactory(
+            purchase_order=po,
+            product_variant=variant,
+            company=company,
+            ordered_qty=5,
+        )
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_single_variant",
+            side_effect=Exception("network error"),
+        ):
+            PurchaseOrderService().update_purchase_order(
+                po,
+                {
+                    "status": PurchaseOrder.POStatus.DELIVERED,
+                    "order_details": [
+                        {
+                            "id": str(detail.id),
+                            "product_variant_id": str(variant.id),
+                            "received_qty": 5,
+                            "ordered_qty": 5,
+                            "received_date": timezone.now().date().isoformat(),
+                        }
+                    ],
+                },
+            )
+
+        po.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.POStatus.DELIVERED)
+
+
+class TestShopeeManagementCommand(TestCase):
+    def test_command_creates_success_log(self):
+        shop = ShopeeShopFactory(is_active=True)
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_all_variants",
+            return_value={"success": 5, "failed": 0, "errors": []},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_stock import Command
+
+            Command().handle()
+
+        self.assertTrue(
+            ShopeeSyncLog.objects.filter(shop=shop, sync_type="stock", status="success").exists()
+        )
+        log = ShopeeSyncLog.objects.get(shop=shop)
+        self.assertEqual(log.records_synced, 5)
+
+    def test_command_logs_failure_on_exception(self):
+        shop = ShopeeShopFactory(is_active=True)
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_all_variants",
+            side_effect=Exception("boom"),
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_sync_stock import Command
+
+            Command().handle()
+
+        log = ShopeeSyncLog.objects.get(shop=shop)
+        self.assertEqual(log.status, "failed")
+        self.assertIn("boom", log.error_message)

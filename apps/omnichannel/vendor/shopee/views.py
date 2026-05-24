@@ -107,12 +107,12 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="sync-stock")
     def sync_stock(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
-        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
+        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
 
         try:
-            syncer = ShopeeStockSyncer(shop)
-            count = syncer.push_stock_to_shopee()
-            return Response({"updated": count})
+            service = ShopeeStockSyncService()
+            result = service.sync_all_variants(shop)
+            return Response({"updated": result["success"]})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List
@@ -11,6 +12,8 @@ from apps.inventory.models import ProductCogs, ProductVariantWarehouse, Warehous
 from apps.inventory.services.inventory_service import InventoryService
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderDetail
 from core.models import Company
+
+logger = logging.getLogger(__name__)
 
 
 class PurchaseOrderService:
@@ -28,6 +31,34 @@ class PurchaseOrderService:
         PurchaseOrder.POStatus.DELIVERED: [PurchaseOrder.POStatus.COMPLETED],
         PurchaseOrder.POStatus.COMPLETED: [],
     }
+
+    def _trigger_shopee_sync_batch(self, variant_ids: list[str], company_id: str) -> None:
+        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
+        from core.models import MarketplaceConnection
+
+        connections = MarketplaceConnection.objects.filter(
+            platform="SHOPEE",
+            is_active=True,
+            company_id=company_id,
+        ).select_related("shopee_shop")
+
+        if not connections.exists():
+            return
+
+        service = ShopeeStockSyncService()
+        for connection in connections:
+            if not connection.shopee_shop:
+                continue
+            for variant_id in variant_ids:
+                try:
+                    service.sync_single_variant(variant_id, connection.shopee_shop)
+                except Exception:
+                    logger.warning(
+                        "Shopee sync trigger failed for variant %s on shop %s",
+                        variant_id,
+                        connection.shopee_shop.shop_id,
+                        exc_info=True,
+                    )
 
     @transaction.atomic
     def create_purchase_order(self, data: dict) -> PurchaseOrder:
@@ -287,6 +318,10 @@ class PurchaseOrderService:
                 data=inventory_data,
             )
 
+        if new_status == PurchaseOrder.POStatus.DELIVERED and inventory_data:
+            variant_ids_to_sync = [str(item["product_variant_id"]) for item in inventory_data]
+            self._trigger_shopee_sync_batch(variant_ids_to_sync, str(po.company.id))
+
         details_data = data.pop("order_details", None)
 
         original_received_qtys = {}
@@ -368,6 +403,9 @@ class PurchaseOrderService:
                     new_status=PurchaseOrder.POStatus.DELIVERED,
                     data=inventory_data,
                 )
+
+                variant_ids_to_sync = [str(item["product_variant_id"]) for item in inventory_data]
+                self._trigger_shopee_sync_batch(variant_ids_to_sync, str(po.company.id))
 
         return po
 

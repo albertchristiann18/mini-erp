@@ -168,6 +168,93 @@ class ShopeeStockSyncService:
             "errors": errors,
         }
 
+    def sync_batch(self, variant_ids: list[str], shop: ShopeeShop) -> dict[str, Any]:
+        from apps.inventory.models import ProductVariantMarketplace
+
+        if not variant_ids:
+            return {"synced": 0, "failed": 0, "failed_variant_ids": []}
+
+        try:
+            listings = ProductVariantMarketplace.objects.filter(
+                product_variant_id__in=variant_ids,
+                marketplace=shop.marketplace,
+                is_active=True,
+                shopee_item_id__isnull=False,
+                shopee_model_id__isnull=False,
+            ).select_related("product_variant")
+
+            by_item: dict[int, list[dict]] = defaultdict(list)
+            for listing in listings:
+                variant = listing.product_variant
+                if variant.is_fake:
+                    continue
+                qty = self._get_available_qty(str(variant.id))
+                item_id: int = listing.shopee_item_id  # type: ignore[assignment]
+                by_item[item_id].append(
+                    {
+                        "model_id": listing.shopee_model_id,
+                        "normal_stock": qty,
+                        "variant_id": str(variant.id),
+                        "sku": variant.sku_variant_code,
+                        "shopee_item_id": listing.shopee_item_id,
+                        "shopee_model_id": listing.shopee_model_id,
+                    }
+                )
+
+            synced_count = 0
+            failed_count = 0
+            failed_variant_ids: list[str] = []
+
+            client = ShopeeClient(shop)
+
+            for item_id, variants in by_item.items():
+                for i in range(0, len(variants), 50):
+                    chunk = variants[i : i + 50]
+                    stock_list = [
+                        {"model_id": v["model_id"], "normal_stock": v["normal_stock"]}
+                        for v in chunk
+                    ]
+                    try:
+                        response = client.update_stock(item_id, stock_list)
+                        for v in chunk:
+                            self._write_log(
+                                shop=shop,
+                                variant_id=v["variant_id"],
+                                sku=v["sku"],
+                                qty=v["normal_stock"],
+                                success=True,
+                                sync_type=ShopeeStockSyncLog.SyncType.FULL,
+                                shopee_item_id=v["shopee_item_id"],
+                                shopee_model_id=v["shopee_model_id"],
+                                shopee_response=response,
+                            )
+                        synced_count += len(chunk)
+                    except ShopeeAPIError as e:
+                        failed_count += len(chunk)
+                        for v in chunk:
+                            self._write_log(
+                                shop=shop,
+                                variant_id=v["variant_id"],
+                                sku=v["sku"],
+                                qty=v["normal_stock"],
+                                success=False,
+                                sync_type=ShopeeStockSyncLog.SyncType.FULL,
+                                error_message=str(e),
+                            )
+                            failed_variant_ids.append(v["variant_id"])
+
+            return {
+                "synced": synced_count,
+                "failed": failed_count,
+                "failed_variant_ids": failed_variant_ids,
+            }
+        except Exception:
+            return {
+                "synced": 0,
+                "failed": len(variant_ids),
+                "failed_variant_ids": variant_ids,
+            }
+
     def _get_available_qty(self, variant_id: str) -> int:
         from apps.inventory.models import ProductVariantWarehouse
 
