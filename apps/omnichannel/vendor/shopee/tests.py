@@ -1664,3 +1664,143 @@ class TestShopeeProductUpdate(TestCase):
         log = ShopeeSyncLog.objects.filter(shop=shop, sync_type="product_update").first()
         self.assertIsNotNone(log)
         self.assertEqual(log.status, "success")
+
+
+class TestShopeePriceSync(TestCase):
+    def test_update_price_for_listing_calls_update_price_api(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+        variant = ProductVariantFactory(company=company)
+        listing = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            selling_price=50000,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.client.ShopeeClient.update_price",
+            return_value={},
+        ) as mock_update:
+            result = ShopeeProductPushService().update_price_for_listing(listing, shop)
+
+        self.assertTrue(result["updated"])
+        self.assertEqual(result["errors"], [])
+        mock_update.assert_called_once_with(
+            111,
+            [{"model_id": 222, "original_price": 50000}],
+        )
+
+    def test_update_price_skips_when_no_shopee_item_id(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        variant = ProductVariantFactory(company=company)
+        listing = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            selling_price=50000,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        result = ShopeeProductPushService().update_price_for_listing(listing, shop)
+
+        self.assertFalse(result["updated"])
+        self.assertTrue(len(result["errors"]) > 0)
+
+    def test_update_prices_command_creates_success_log(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        variant = ProductVariantFactory(company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            selling_price=50000,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.update_price_for_listing",
+            return_value={"updated": True, "errors": []},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_update_prices import (
+                Command,
+            )
+
+            Command().handle()
+
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_price")
+        self.assertEqual(log.status, "success")
+        self.assertEqual(log.records_synced, 1)
+        self.assertIsNotNone(log.finished_at)
+
+    def test_update_prices_view_action_triggers_shopee_sync(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+        category = Category.objects.create(
+            company=company, name="PriceCat", category_code="PC1", shopee_category_id=111
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="PriceProduct", weight=100, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        listing = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            selling_price=50000,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+
+        user = User.objects.create_user(username="priceuser", password="pass", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        with patch(
+            "apps.inventory.services.product_service.ProductService._trigger_shopee_price_update"
+        ) as mock_trigger:
+            with self.captureOnCommitCallbacks(execute=True):
+                resp = client.patch(
+                    f"/product/{product.id}/update_prices/",
+                    [
+                        {
+                            "variant_id": str(variant.id),
+                            "marketplace_id": str(marketplace.id),
+                            "selling_price": 45000,
+                        }
+                    ],
+                    format="json",
+                )
+
+        self.assertEqual(resp.status_code, 200)
+        listing.refresh_from_db()
+        self.assertEqual(listing.selling_price, 45000)
+        mock_trigger.assert_called_once()
+        call_args = mock_trigger.call_args[0]
+        self.assertIn(str(listing.id), call_args[0])
+        self.assertEqual(call_args[1], str(company.id))

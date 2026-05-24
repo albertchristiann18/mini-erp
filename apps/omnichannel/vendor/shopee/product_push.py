@@ -255,3 +255,29 @@ class ShopeeProductPushService:
             )
             errors.append(f"Unexpected error: {e}")
             return {"updated": False, "errors": errors}
+
+    def update_price_for_listing(self, listing: Any, shop: ShopeeShop) -> dict[str, Any]:
+        if not listing.shopee_item_id:
+            return {"updated": False, "errors": ["No shopee_item_id — run match or push first"]}
+        if listing.shopee_model_id is None:
+            return {"updated": False, "errors": ["shopee_model_id is None"]}
+
+        client = ShopeeClient(shop)
+        price_list = [
+            {
+                "model_id": listing.shopee_model_id,
+                "original_price": listing.selling_price,
+            }
+        ]
+        try:
+            client.update_price(listing.shopee_item_id, price_list)
+            return {"updated": True, "errors": []}
+        except ShopeeAPIError as e:
+            return {"updated": False, "errors": [f"Shopee API error: {e}"]}
+        except Exception as e:
+            logger.exception(
+                "update_price_for_listing failed for listing %s shop %s",
+                listing.id,
+                shop.shop_id,
+            )
+            return {"updated": False, "errors": [f"Unexpected error: {e}"]}

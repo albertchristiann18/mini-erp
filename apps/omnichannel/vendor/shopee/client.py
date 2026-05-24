@@ -280,3 +280,9 @@ class ShopeeClient:
 
     def update_item(self, item_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         return self.post("/api/v2/product/update_item", {"item_id": item_id, **payload})
+
+    def update_price(self, item_id: int, price_list: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.post(
+            "/api/v2/product/update_price",
+            {"item_id": item_id, "price_list": price_list},
+        )

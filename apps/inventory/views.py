@@ -1,6 +1,6 @@
 from typing import Any, Type
 
-from django.db import models
+from django.db import models, transaction
 from django.db.models import QuerySet
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
@@ -63,6 +63,64 @@ class ProductViewSet(viewsets.ModelViewSet):
     def partial_update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
+
+    @action(detail=True, methods=["patch"], url_path="update_prices")
+    def update_prices(self, request: Request, pk: str | None = None) -> Response:
+        from apps.inventory.models import ProductVariantMarketplace
+        from apps.inventory.services.product_service import ProductService
+
+        product = self.get_object()
+        price_updates = request.data
+        if not isinstance(price_updates, list):
+            return Response({"error": "Expected JSON array"}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_listing_ids: list[str] = []
+        errors: list[str] = []
+
+        for item in price_updates:
+            variant_id = item.get("variant_id")
+            marketplace_id = item.get("marketplace_id")
+            selling_price = item.get("selling_price")
+            discounted_price = item.get("discounted_price")
+
+            if not variant_id or not marketplace_id or selling_price is None:
+                errors.append(f"Missing required fields in: {item}")
+                continue
+
+            update_fields: dict = {"selling_price": selling_price}
+            if discounted_price is not None:
+                update_fields["discounted_price"] = discounted_price
+
+            qs = ProductVariantMarketplace.objects.filter(
+                product_variant_id=variant_id,
+                marketplace_id=marketplace_id,
+                product_variant__product=product,
+                product_variant__company=product.company,
+            )
+            updated = qs.update(**update_fields)
+            if updated:
+                listing = qs.first()
+                if listing:
+                    updated_listing_ids.append(str(listing.id))
+            else:
+                errors.append(
+                    f"No listing found for variant_id={variant_id} marketplace_id={marketplace_id}"
+                )
+
+        if updated_listing_ids:
+            _ids = updated_listing_ids
+            _company_id = str(product.company_id)
+            transaction.on_commit(
+                lambda: ProductService()._trigger_shopee_price_update(_ids, _company_id)
+            )
+
+        return Response(
+            {
+                "updated": len(updated_listing_ids),
+                "errors": errors,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         is_many = isinstance(request.data, list)
