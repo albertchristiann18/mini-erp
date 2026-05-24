@@ -239,3 +239,41 @@ class ShopeeClient:
             "/api/v2/payment/get_escrow_detail",
             {"order_sn": order_sn},
         )
+
+    # ── Product push methods ───────────────────────────────────────────
+
+    def get_channel_list(self) -> dict[str, Any]:
+        return self.get("/api/v2/logistics/get_channel_list")
+
+    def upload_image(self, image_file: Any) -> str:
+        """Upload image to Shopee media space. Returns image_id string."""
+        self._ensure_token_fresh()
+        path = "/api/v2/media_space/upload_image"
+        sign, timestamp = self._sign(path)
+        params = {
+            "partner_id": self.shop.partner_id,
+            "shop_id": self.shop.shop_id,
+            "timestamp": timestamp,
+            "access_token": self.shop.access_token,
+            "sign": sign,
+        }
+        url = f"{self.shop.base_url}{path}"
+        resp = requests.post(url, params=params, files={"file": image_file}, timeout=60)
+        if resp.status_code != 200:
+            raise ShopeeAPIError(
+                status_code=resp.status_code, error_code="HTTP_ERROR", message=resp.text
+            )
+        data = resp.json()
+        if data.get("error"):
+            raise ShopeeAPIError(
+                status_code=resp.status_code,
+                error_code=data["error"],
+                message=data.get("message", ""),
+            )
+        return str(cast(dict[str, Any], data.get("response", data)).get("image_id", ""))
+
+    def add_item(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.post("/api/v2/product/add_item", payload)
+
+    def add_model(self, item_id: int, models: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.post("/api/v2/product/add_model", {"item_id": item_id, "model": models})

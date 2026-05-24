@@ -16,6 +16,7 @@ class Category(DefaultModel):
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     master_category_key = models.CharField(max_length=100, blank=True, default="")
+    shopee_category_id = models.BigIntegerField(null=True, blank=True)
 
     def __str__(self) -> str:
         return self.name

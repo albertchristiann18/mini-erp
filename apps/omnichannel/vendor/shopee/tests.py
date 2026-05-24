@@ -19,6 +19,8 @@ from apps.inventory.factories import (
     ProductVariantWarehouseFactory,
 )
 from apps.inventory.models import (
+    Category,
+    Product,
     ProductVariant,
     ProductVariantMarketplace,
     ProductVariantWarehouse,
@@ -41,6 +43,7 @@ from apps.omnichannel.vendor.shopee.models import (
     ShopeeSyncLog,
     ShopeeWebhookLog,
 )
+from apps.omnichannel.vendor.shopee.product_push import ShopeeProductPushService
 from apps.purchasing.factories import PurchaseOrderDetailFactory, PurchaseOrderFactory
 from apps.purchasing.models import PurchaseOrder
 from apps.purchasing.services.purchasing_service import PurchaseOrderService
@@ -1224,3 +1227,96 @@ class TestShopeeProductMatch(TestCase):
         log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_match")
         self.assertEqual(log.status, "success")
         self.assertEqual(log.records_synced, 3)
+
+
+class TestShopeeProductPush(TestCase):
+    """ShopeeProductPushService: push products to Shopee."""
+
+    def test_push_single_variant_product_writes_item_id(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+        category = Category.objects.create(
+            company=company, name="Test Cat", category_code="TC", shopee_category_id=12345
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="Test Product", weight=500, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        pvm = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            selling_price=50000,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        with (
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_channel_list",
+                return_value={
+                    "logistics_channel_list": [{"logistics_channel_id": 1, "enabled": True}]
+                },
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.upload_image", return_value=""
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.add_item",
+                return_value={"item_id": 999},
+            ),
+        ):
+            result = ShopeeProductPushService().push_product(product, shop)
+
+        self.assertEqual(result["item_id"], 999)
+        pvm.refresh_from_db()
+        self.assertEqual(pvm.shopee_item_id, 999)
+        self.assertEqual(pvm.shopee_model_id, 0)
+
+    def test_push_skips_product_without_shopee_category_id(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        category = Category.objects.create(
+            company=company, name="No Shopee Cat", category_code="NSC", shopee_category_id=None
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="No Cat Product", weight=500
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            selling_price=25000,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        result = ShopeeProductPushService().push_product(product, shop)
+
+        self.assertIsNone(result["item_id"])
+        self.assertTrue(len(result["errors"]) > 0)
+        self.assertIn("shopee_category_id", result["errors"][0])
+
+    def test_push_command_creates_success_log(self):
+        shop = ShopeeShopFactory(is_active=True, marketplace=MarketplaceFactory())
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.push_product",
+            return_value={"item_id": 100, "models_pushed": 1, "errors": []},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_push_products import (
+                Command,
+            )
+
+            Command().handle()
+
+        log = ShopeeSyncLog.objects.filter(shop=shop, sync_type="product_push").first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, "success")
