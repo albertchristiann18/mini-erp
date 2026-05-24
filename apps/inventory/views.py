@@ -48,6 +48,22 @@ class ProductViewSet(viewsets.ModelViewSet):
             return ProductCreateSerializer
         return ProductSerializer
 
+    def update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        from django.db import transaction
+
+        from apps.inventory.services.product_service import ProductService
+
+        response = super().update(request, *args, **kwargs)
+        instance = self.get_object()
+        transaction.on_commit(
+            lambda: ProductService()._trigger_shopee_product_update(str(instance.id))
+        )
+        return response
+
+    def partial_update(self, request: Request, *args: Any, **kwargs: Any) -> Response:
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
+
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         is_many = isinstance(request.data, list)
         serializer = self.get_serializer(data=request.data, many=is_many)

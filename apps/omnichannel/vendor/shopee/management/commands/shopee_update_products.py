@@ -39,18 +39,24 @@ class Command(BaseCommand):
             updated_count = 0
             all_errors: list[str] = []
 
-            for product in products:
-                result = service.update_product(product, shop)
-                if result["updated"]:
-                    updated_count += 1
-                if result["errors"]:
-                    all_errors.extend([f"{product.sku_code}: {e}" for e in result["errors"]])
+            try:
+                for product in products:
+                    result = service.update_product(product, shop)
+                    if result["updated"]:
+                        updated_count += 1
+                    if result["errors"]:
+                        all_errors.extend([f"{product.sku_code}: {e}" for e in result["errors"]])
 
-            log.status = "success"
-            log.records_synced = updated_count
-            log.error_message = "\n".join(all_errors[:50])
-            log.finished_at = timezone.now()
-            log.save(update_fields=["status", "records_synced", "error_message", "finished_at"])
+                log.status = "failed" if updated_count == 0 and all_errors else "success"
+                log.records_synced = updated_count
+                log.error_message = "\n".join(all_errors[:50])
+            except Exception as e:
+                log.status = "failed"
+                log.error_message = str(e)
+            finally:
+                log.finished_at = timezone.now()
+                log.save(update_fields=["status", "records_synced", "error_message", "finished_at"])
+
             self.stdout.write(
                 f"Shop {shop.shop_id}: updated={updated_count} errors={len(all_errors)}"
             )

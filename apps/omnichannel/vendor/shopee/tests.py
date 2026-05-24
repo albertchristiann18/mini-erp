@@ -22,28 +22,26 @@ from apps.inventory.models import (
     Category,
     Product,
     ProductVariant,
-    ProductVariantMarketplace,
     ProductVariantWarehouse,
     StockMovement,
 )
 from apps.inventory.services.inventory_service import InventoryService
 from apps.omnichannel.vendor.shopee.client import ShopeeClient
-from apps.omnichannel.vendor.shopee.product_match import ShopeeProductMatchService
 from apps.omnichannel.vendor.shopee.exceptions import ShopeeAPIError, ShopeeAuthError
 from apps.omnichannel.vendor.shopee.factories import (
     ShopeeShopFactory,
     ShopeeStockSyncLogFactory,
     ShopeeWebhookLogFactory,
 )
-from apps.omnichannel.vendor.shopee.models import ShopeeStockSyncLog, ShopeeWebhookLog
-from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
-from apps.omnichannel.vendor.shopee.utils import sign_shop_api
 from apps.omnichannel.vendor.shopee.models import (
     ShopeeStockSyncLog,
     ShopeeSyncLog,
     ShopeeWebhookLog,
 )
+from apps.omnichannel.vendor.shopee.product_match import ShopeeProductMatchService
 from apps.omnichannel.vendor.shopee.product_push import ShopeeProductPushService
+from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
+from apps.omnichannel.vendor.shopee.utils import sign_shop_api
 from apps.purchasing.factories import PurchaseOrderDetailFactory, PurchaseOrderFactory
 from apps.purchasing.models import PurchaseOrder
 from apps.purchasing.services.purchasing_service import PurchaseOrderService
@@ -1004,24 +1002,25 @@ class TestPODeliveredShopeeSync(TestCase):
         )
 
         with patch(
-            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_single_variant",
-            return_value=True,
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_batch",
+            return_value={"synced": 1, "failed": 0, "failed_variant_ids": []},
         ) as mock_sync:
-            PurchaseOrderService().update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(variant.id),
-                            "received_qty": 5,
-                            "ordered_qty": 5,
-                            "received_date": timezone.now().date().isoformat(),
-                        }
-                    ],
-                },
-            )
+            with self.captureOnCommitCallbacks(execute=True):
+                PurchaseOrderService().update_purchase_order(
+                    po,
+                    {
+                        "status": PurchaseOrder.POStatus.DELIVERED,
+                        "order_details": [
+                            {
+                                "id": str(detail.id),
+                                "product_variant_id": str(variant.id),
+                                "received_qty": 5,
+                                "ordered_qty": 5,
+                                "received_date": timezone.now().date().isoformat(),
+                            }
+                        ],
+                    },
+                )
 
         self.assertTrue(mock_sync.called)
 
@@ -1064,30 +1063,151 @@ class TestPODeliveredShopeeSync(TestCase):
         )
 
         with patch(
-            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_single_variant",
+            "apps.omnichannel.vendor.shopee.stock_sync.ShopeeStockSyncService.sync_batch",
             side_effect=Exception("network error"),
         ):
-            PurchaseOrderService().update_purchase_order(
-                po,
-                {
-                    "status": PurchaseOrder.POStatus.DELIVERED,
-                    "order_details": [
-                        {
-                            "id": str(detail.id),
-                            "product_variant_id": str(variant.id),
-                            "received_qty": 5,
-                            "ordered_qty": 5,
-                            "received_date": timezone.now().date().isoformat(),
-                        }
-                    ],
-                },
-            )
+            with self.captureOnCommitCallbacks(execute=True):
+                PurchaseOrderService().update_purchase_order(
+                    po,
+                    {
+                        "status": PurchaseOrder.POStatus.DELIVERED,
+                        "order_details": [
+                            {
+                                "id": str(detail.id),
+                                "product_variant_id": str(variant.id),
+                                "received_qty": 5,
+                                "ordered_qty": 5,
+                                "received_date": timezone.now().date().isoformat(),
+                            }
+                        ],
+                    },
+                )
 
         po.refresh_from_db()
         self.assertEqual(po.status, PurchaseOrder.POStatus.DELIVERED)
 
 
 class TestShopeeManagementCommand(TestCase):
+    def test_push_command_finalizes_log_on_exception(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        product = ProductFactory(company=company)
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.push_product",
+            side_effect=Exception("crash"),
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_push_products import (
+                Command,
+            )
+
+            Command().handle()
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_push")
+        self.assertEqual(log.status, "failed")
+        self.assertIsNotNone(log.finished_at)
+        self.assertIn("crash", log.error_message)
+
+    def test_push_command_sets_failed_when_no_products_pushed(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        category = Category.objects.create(
+            company=company, name="Cat", category_code="C1", shopee_category_id=111
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="P1", weight=100, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.push_product",
+            return_value={"item_id": None, "models_pushed": 0, "errors": ["API error"]},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_push_products import (
+                Command,
+            )
+
+            Command().handle()
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_push")
+        self.assertEqual(log.status, "failed")
+
+    def test_update_command_finalizes_log_on_exception(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        product = ProductFactory(company=company)
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=999,
+            shopee_model_id=0,
+        )
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.update_product",
+            side_effect=Exception("crash"),
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_update_products import (
+                Command,
+            )
+
+            Command().handle()
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_update")
+        self.assertEqual(log.status, "failed")
+        self.assertIsNotNone(log.finished_at)
+        self.assertIn("crash", log.error_message)
+
+    def test_update_command_sets_failed_when_no_products_updated(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        category = Category.objects.create(
+            company=company, name="Cat", category_code="C2", shopee_category_id=222
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="P2", weight=100, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=999,
+            shopee_model_id=0,
+        )
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.update_product",
+            return_value={"updated": False, "errors": ["API error"]},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_update_products import (
+                Command,
+            )
+
+            Command().handle()
+        log = ShopeeSyncLog.objects.get(shop=shop, sync_type="product_update")
+        self.assertEqual(log.status, "failed")
+
     def test_command_creates_success_log(self):
         shop = ShopeeShopFactory(is_active=True)
 
@@ -1119,6 +1239,50 @@ class TestShopeeManagementCommand(TestCase):
         log = ShopeeSyncLog.objects.get(shop=shop)
         self.assertEqual(log.status, "failed")
         self.assertIn("boom", log.error_message)
+
+
+class TestShopeeSyncBatchFix(TestCase):
+    def test_sync_batch_logs_exception_on_outer_error(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(company=company, marketplace=marketplace, is_active=True)
+        service = ShopeeStockSyncService()
+        with patch(
+            "apps.inventory.models.ProductVariantMarketplace.objects.filter",
+            side_effect=Exception("db down"),
+        ):
+            with self.assertLogs("apps.omnichannel.vendor.shopee.stock_sync", level="ERROR") as cm:
+                result = service.sync_batch(["fake-id"], shop)
+        self.assertEqual(result["failed"], 1)
+        self.assertTrue(any("sync_batch failed" in msg for msg in cm.output))
+
+    def test_sync_all_variants_catches_network_error(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(company=company, marketplace=marketplace, is_active=True)
+        variant = ProductVariantFactory(company=company)
+        variant.refresh_from_db()
+        ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            is_active=True,
+            shopee_item_id=111,
+            shopee_model_id=222,
+        )
+        ProductVariantWarehouseFactory(
+            product_variant=variant,
+            warehouse=WarehouseFactory(company=company),
+            company=company,
+            physical_qty=10,
+        )
+        with patch(
+            "apps.omnichannel.vendor.shopee.client.ShopeeClient.update_stock",
+            side_effect=Exception("ConnectionError: timeout"),
+        ):
+            result = ShopeeStockSyncService().sync_all_variants(shop)
+        self.assertGreater(result["failed"], 0)
+        self.assertEqual(result["success"], 0)
 
 
 class TestShopeeProductMatch(TestCase):
@@ -1210,6 +1374,63 @@ class TestShopeeProductMatch(TestCase):
         pvm.refresh_from_db()
         self.assertIsNone(pvm.shopee_item_id)
         self.assertGreaterEqual(result["skipped"], 1)
+
+    def test_match_restricts_update_to_correct_company(self):
+        company_a = CompanyFactory()
+        company_b = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company_a, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+
+        product_a = ProductFactory(company=company_a)
+        variant_a = ProductVariantFactory(
+            product=product_a, company=company_a, variant_values={"1": "RED"}
+        )
+        variant_a.refresh_from_db()
+        model_sku = variant_a.sku_variant_code
+
+        product_b = ProductFactory(company=company_b)
+        variant_b = ProductVariantFactory(product=product_b, company=company_b)
+
+        pvm_a = ProductVariantMarketplaceFactory(
+            product_variant=variant_a,
+            marketplace=marketplace,
+            company=company_a,
+            is_active=True,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+        pvm_b = ProductVariantMarketplaceFactory(
+            product_variant=variant_b,
+            marketplace=marketplace,
+            company=company_b,
+            is_active=True,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        with (
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_list",
+                return_value={"item_id_list": [111], "has_next_page": False},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_item_base_info",
+                return_value={"item_list": [{"item_id": 111, "item_sku": model_sku}]},
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_model_list",
+                return_value={"model": [{"model_id": 222, "model_sku": model_sku}]},
+            ),
+        ):
+            ShopeeProductMatchService().match_products_for_shop(shop)
+
+        pvm_a.refresh_from_db()
+        pvm_b.refresh_from_db()
+        self.assertEqual(pvm_a.shopee_item_id, 111)
+        self.assertIsNone(pvm_b.shopee_item_id)
 
     def test_match_command_creates_success_log(self):
         shop = ShopeeShopFactory(is_active=True)
@@ -1338,7 +1559,7 @@ class TestShopeeProductUpdate(TestCase):
         )
         variant = ProductVariantFactory(product=product, company=company)
         variant.refresh_from_db()
-        pvm = ProductVariantMarketplaceFactory(
+        ProductVariantMarketplaceFactory(
             product_variant=variant,
             marketplace=marketplace,
             company=company,
@@ -1379,7 +1600,7 @@ class TestShopeeProductUpdate(TestCase):
         )
         variant = ProductVariantFactory(product=product, company=company)
         variant.refresh_from_db()
-        pvm = ProductVariantMarketplaceFactory(
+        ProductVariantMarketplaceFactory(
             product_variant=variant,
             marketplace=marketplace,
             company=company,
@@ -1392,6 +1613,40 @@ class TestShopeeProductUpdate(TestCase):
 
         self.assertFalse(result["updated"])
         self.assertTrue(len(result["errors"]) > 0)
+
+    def test_product_update_view_triggers_shopee_sync(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIClient
+
+        User = get_user_model()
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+        category = Category.objects.create(
+            company=company, name="Cat", category_code="C3", shopee_category_id=111
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="Old Name", weight=500, variant_options=[]
+        )
+
+        user = User.objects.create_user(username="tester", password="pass", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        with patch(
+            "apps.inventory.services.product_service.ProductService._trigger_shopee_product_update"
+        ) as mock_trigger:
+            with self.captureOnCommitCallbacks(execute=True):
+                client.patch(
+                    f"/product/{product.id}/",
+                    {"name": "New Name"},
+                    format="json",
+                )
+
+        mock_trigger.assert_called_once_with(str(product.id))
 
     def test_update_command_creates_success_log(self):
         shop = ShopeeShopFactory(is_active=True, marketplace=MarketplaceFactory())

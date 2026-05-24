@@ -49,16 +49,14 @@ class PurchaseOrderService:
         for connection in connections:
             if not connection.shopee_shop:
                 continue
-            for variant_id in variant_ids:
-                try:
-                    service.sync_single_variant(variant_id, connection.shopee_shop)
-                except Exception:
-                    logger.warning(
-                        "Shopee sync trigger failed for variant %s on shop %s",
-                        variant_id,
-                        connection.shopee_shop.shop_id,
-                        exc_info=True,
-                    )
+            try:
+                service.sync_batch(variant_ids, connection.shopee_shop)
+            except Exception:
+                logger.warning(
+                    "Shopee sync_batch trigger failed for shop %s",
+                    connection.shopee_shop.shop_id,
+                    exc_info=True,
+                )
 
     @transaction.atomic
     def create_purchase_order(self, data: dict) -> PurchaseOrder:
@@ -320,7 +318,9 @@ class PurchaseOrderService:
 
         if new_status == PurchaseOrder.POStatus.DELIVERED and inventory_data:
             variant_ids_to_sync = [str(item["product_variant_id"]) for item in inventory_data]
-            self._trigger_shopee_sync_batch(variant_ids_to_sync, str(po.company.id))
+            _ids = variant_ids_to_sync
+            _company_id = str(po.company.id)
+            transaction.on_commit(lambda: self._trigger_shopee_sync_batch(_ids, _company_id))
 
         details_data = data.pop("order_details", None)
 
@@ -405,7 +405,9 @@ class PurchaseOrderService:
                 )
 
                 variant_ids_to_sync = [str(item["product_variant_id"]) for item in inventory_data]
-                self._trigger_shopee_sync_batch(variant_ids_to_sync, str(po.company.id))
+                _ids2 = variant_ids_to_sync
+                _company_id2 = str(po.company.id)
+                transaction.on_commit(lambda: self._trigger_shopee_sync_batch(_ids2, _company_id2))
 
         return po
 

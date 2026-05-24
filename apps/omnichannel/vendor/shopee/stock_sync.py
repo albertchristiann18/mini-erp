@@ -161,6 +161,19 @@ class ShopeeStockSyncService:
                             error_message=str(e),
                         )
                     errors.extend([{"sku": v["sku"], "error": str(e)} for v in chunk])
+                except Exception as e:
+                    failed_count += len(chunk)
+                    for v in chunk:
+                        self._write_log(
+                            shop=shop,
+                            variant_id=v["variant_id"],
+                            sku=v["sku"],
+                            qty=v["normal_stock"],
+                            success=False,
+                            sync_type=ShopeeStockSyncLog.SyncType.FULL,
+                            error_message=str(e),
+                        )
+                    errors.extend([{"sku": v["sku"], "error": str(e)} for v in chunk])
 
         return {
             "success": success_count,
@@ -249,6 +262,11 @@ class ShopeeStockSyncService:
                 "failed_variant_ids": failed_variant_ids,
             }
         except Exception:
+            logger.exception(
+                "sync_batch failed for shop %s variants %s",
+                shop.shop_id,
+                variant_ids,
+            )
             return {
                 "synced": 0,
                 "failed": len(variant_ids),

@@ -22,7 +22,6 @@ class Command(BaseCommand):
             if not shop.marketplace:
                 continue
 
-            # Find products with at least one unlinked active listing for this shop's marketplace
             unlinked_product_ids = (
                 ProductVariantMarketplace.objects.filter(
                     marketplace=shop.marketplace,
@@ -42,18 +41,24 @@ class Command(BaseCommand):
             pushed_count = 0
             all_errors: list[str] = []
 
-            for product in products:
-                result = service.push_product(product, shop)
-                if result["item_id"]:
-                    pushed_count += 1
-                if result["errors"]:
-                    all_errors.extend([f"{product.sku_code}: {e}" for e in result["errors"]])
+            try:
+                for product in products:
+                    result = service.push_product(product, shop)
+                    if result["item_id"]:
+                        pushed_count += 1
+                    if result["errors"]:
+                        all_errors.extend([f"{product.sku_code}: {e}" for e in result["errors"]])
 
-            log.status = "success"
-            log.records_synced = pushed_count
-            log.error_message = "\n".join(all_errors[:50])  # cap to 50 errors
-            log.finished_at = timezone.now()
-            log.save(update_fields=["status", "records_synced", "error_message", "finished_at"])
+                log.status = "failed" if pushed_count == 0 and all_errors else "success"
+                log.records_synced = pushed_count
+                log.error_message = "\n".join(all_errors[:50])
+            except Exception as e:
+                log.status = "failed"
+                log.error_message = str(e)
+            finally:
+                log.finished_at = timezone.now()
+                log.save(update_fields=["status", "records_synced", "error_message", "finished_at"])
+
             self.stdout.write(
                 f"Shop {shop.shop_id}: pushed={pushed_count} errors={len(all_errors)}"
             )

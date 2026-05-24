@@ -103,6 +103,7 @@ class ShopeeProductMatchService:
                     updated = ProductVariantMarketplace.objects.filter(
                         product_variant=variant,
                         marketplace=marketplace,
+                        product_variant__company=connection.company,
                     ).update(shopee_item_id=item_id, shopee_model_id=model_id)
                     if updated:
                         matched += updated
@@ -120,6 +121,7 @@ class ShopeeProductMatchService:
                 updated = ProductVariantMarketplace.objects.filter(
                     product_variant=variant,
                     marketplace=marketplace,
+                    product_variant__company=connection.company,
                 ).update(shopee_item_id=item_id, shopee_model_id=0)
                 if updated:
                     matched += updated
