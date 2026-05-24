@@ -257,6 +257,7 @@ class SalesOrderListSerializer(serializers.ModelSerializer):
             "status",
             "warehouse_name",
             "customer_name",
+            "marketplace_order_id",
             "marketplace_order_number",
             "subtotal",
             "net_revenue",

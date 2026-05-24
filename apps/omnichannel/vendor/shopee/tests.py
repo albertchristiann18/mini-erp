@@ -1787,6 +1787,87 @@ class TestShopeeProductUpdate(TestCase):
         self.assertEqual(log.status, "success")
 
 
+class TestShopeeManageOrder(TestCase):
+    def setUp(self):
+        self.company = CompanyFactory()
+        self.marketplace = MarketplaceFactory()
+        self.warehouse = WarehouseFactory(company=self.company)
+        self.shop = ShopeeShopFactory(
+            company=self.company,
+            marketplace=self.marketplace,
+            default_warehouse=self.warehouse,
+        )
+
+    @patch(
+        "apps.omnichannel.vendor.shopee.client.ShopeeClient.get_shipping_document_result",
+        return_value={"file_url": "https://cdn.shopee.example.com/label.pdf", "result_list": []},
+    )
+    def test_shipping_document_action_returns_file_url(self, mock_get):
+        """POST /shopee/shops/{id}/shipping-document/ returns file_url from Shopee API."""
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        user = User.objects.create_user(username="labeluser", password="pass", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        resp = client.post(
+            f"/shopee/shops/{self.shop.id}/shipping-document/",
+            {"order_sns": ["ORDER_001", "ORDER_002"]},
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("file_url", resp.data)
+        self.assertEqual(resp.data["file_url"], "https://cdn.shopee.example.com/label.pdf")
+        mock_get.assert_called_once_with(["ORDER_001", "ORDER_002"])
+
+    def test_shipping_document_action_rejects_empty_order_sns(self):
+        """POST with empty order_sns list returns 400."""
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        user = User.objects.create_user(username="labeluser2", password="pass", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        resp = client.post(
+            f"/shopee/shops/{self.shop.id}/shipping-document/",
+            {"order_sns": []},
+            format="json",
+        )
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_sales_order_list_filterable_by_source_platform(self):
+        """GET /sales-orders/?source_platform=SHOPEE returns only Shopee-sourced orders."""
+        SalesOrder.objects.create(
+            company=self.company,
+            warehouse=self.warehouse,
+            order_date=timezone.now(),
+            status=SalesOrder.OrderStatus.CONFIRMED,
+            source_platform=SalesOrder.SourcePlatform.SHOPEE,
+            marketplace_order_id="SH-MANAGE-001",
+        )
+        SalesOrder.objects.create(
+            company=self.company,
+            warehouse=self.warehouse,
+            order_date=timezone.now(),
+            status=SalesOrder.OrderStatus.CONFIRMED,
+            source_platform=SalesOrder.SourcePlatform.MANUAL,
+            marketplace_order_id="MANUAL-001",
+        )
+
+        client = APIClient()
+        resp = client.get("/sales-orders/?source_platform=SHOPEE")
+
+        self.assertEqual(resp.status_code, 200)
+        results = resp.data.get("results", resp.data)
+        order_ids = [o["marketplace_order_id"] for o in results]
+        self.assertIn("SH-MANAGE-001", order_ids)
+        self.assertNotIn("MANUAL-001", order_ids)
+
+
 class TestShopeePriceSync(TestCase):
     def test_update_price_for_listing_calls_update_price_api(self):
         company = CompanyFactory()

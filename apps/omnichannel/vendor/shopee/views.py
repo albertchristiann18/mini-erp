@@ -116,6 +116,26 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=["post"], url_path="shipping-document")
+    def shipping_document(self, request: Request, pk: str | None = None) -> Response:
+        shop = self.get_object()
+        order_sns = request.data.get("order_sns", [])
+        if not isinstance(order_sns, list) or not order_sns:
+            return Response(
+                {"error": "order_sns must be a non-empty list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
+
+        try:
+            client = ShopeeClient(shop)
+            result = client.get_shipping_document_result(order_sns)
+            return Response(result)
+        except ShopeeAPIError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class ShopeeWebhookLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = ShopeeWebhookLogSerializer

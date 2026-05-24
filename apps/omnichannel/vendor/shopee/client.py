@@ -286,3 +286,16 @@ class ShopeeClient:
             "/api/v2/product/update_price",
             {"item_id": item_id, "price_list": price_list},
         )
+
+    def get_shipping_document_result(
+        self,
+        order_sn_list: list[str],
+        document_type: str = "THERMAL_AIR_WAYBILL",
+    ) -> dict[str, Any]:
+        return self.post(
+            "/api/v2/logistics/get_shipping_document_result",
+            {
+                "order_list": [{"order_sn": sn, "package_number": ""} for sn in order_sn_list],
+                "shipping_document_type": document_type,
+            },
+        )
