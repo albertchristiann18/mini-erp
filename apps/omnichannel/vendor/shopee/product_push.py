@@ -192,3 +192,66 @@ class ShopeeProductPushService:
             )
             errors.append(f"Unexpected error: {e}")
             return {"item_id": None, "models_pushed": 0, "errors": errors}
+
+    def update_product(self, product: Any, shop: ShopeeShop) -> dict[str, Any]:
+        from apps.inventory.models import ProductVariantMarketplace
+
+        errors: list[str] = []
+        marketplace = shop.marketplace
+        if not marketplace:
+            return {"updated": False, "errors": ["ShopeeShop has no linked Marketplace"]}
+
+        listing_with_id = ProductVariantMarketplace.objects.filter(
+            product_variant__product=product,
+            marketplace=marketplace,
+            is_active=True,
+            shopee_item_id__isnull=False,
+        ).first()
+        if not listing_with_id:
+            return {
+                "updated": False,
+                "errors": ["No shopee_item_id found — use push_product first"],
+            }
+
+        assert listing_with_id.shopee_item_id is not None
+        item_id: int = listing_with_id.shopee_item_id
+        client = ShopeeClient(shop)
+
+        images: list[dict[str, str]] = []
+        try:
+            if product.product_photo:
+                product.product_photo.open("rb")
+                image_id = client.upload_image(product.product_photo)
+                product.product_photo.close()
+                if image_id:
+                    images = [{"image_id": image_id}]
+        except Exception as e:
+            errors.append(f"Image upload failed: {e}")
+
+        payload: dict[str, Any] = {
+            "item_name": product.name,
+            "description": product.description or product.name,
+            "item_sku": product.sku_code,
+            "weight": max(product.weight, 1),
+        }
+        if images:
+            payload["images"] = images
+        if product.length and product.width and product.height:
+            payload["dimension"] = {
+                "package_length": product.length,
+                "package_width": product.width,
+                "package_height": product.height,
+            }
+
+        try:
+            client.update_item(item_id, payload)
+            return {"updated": True, "errors": errors}
+        except ShopeeAPIError as e:
+            errors.append(f"Shopee API error: {e}")
+            return {"updated": False, "errors": errors}
+        except Exception as e:
+            logger.exception(
+                "update_product failed for product %s shop %s", product.sku_code, shop.shop_id
+            )
+            errors.append(f"Unexpected error: {e}")
+            return {"updated": False, "errors": errors}

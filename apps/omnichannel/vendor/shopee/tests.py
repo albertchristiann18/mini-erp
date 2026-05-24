@@ -1320,3 +1320,92 @@ class TestShopeeProductPush(TestCase):
         log = ShopeeSyncLog.objects.filter(shop=shop, sync_type="product_push").first()
         self.assertIsNotNone(log)
         self.assertEqual(log.status, "success")
+
+
+class TestShopeeProductUpdate(TestCase):
+    def test_update_product_calls_update_item(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        MarketplaceConnectionFactory(
+            company=company, shopee_shop=shop, is_active=True, platform="SHOPEE"
+        )
+        category = Category.objects.create(
+            company=company, name="Cat", category_code="C1", shopee_category_id=111
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="Old Name", weight=500, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        pvm = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            selling_price=50000,
+            shopee_item_id=999,
+            shopee_model_id=0,
+        )
+
+        with (
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.upload_image",
+                return_value="",
+            ),
+            patch(
+                "apps.omnichannel.vendor.shopee.client.ShopeeClient.update_item",
+                return_value={"item_id": 999},
+            ) as mock_update,
+        ):
+            product.name = "New Name"
+            product.save(update_fields=["name"])
+            result = ShopeeProductPushService().update_product(product, shop)
+
+        self.assertTrue(result["updated"])
+        mock_update.assert_called_once()
+        call_args = mock_update.call_args
+        self.assertEqual(call_args[0][0], 999)
+        self.assertEqual(call_args[0][1]["item_name"], "New Name")
+
+    def test_update_product_skips_when_no_shopee_item_id(self):
+        company = CompanyFactory()
+        marketplace = MarketplaceFactory()
+        shop = ShopeeShopFactory(is_active=True, marketplace=marketplace)
+        category = Category.objects.create(
+            company=company, name="Cat", category_code="C1", shopee_category_id=111
+        )
+        product = Product.objects.create(
+            company=company, category=category, name="Test", weight=500, variant_options=[]
+        )
+        variant = ProductVariantFactory(product=product, company=company)
+        variant.refresh_from_db()
+        pvm = ProductVariantMarketplaceFactory(
+            product_variant=variant,
+            marketplace=marketplace,
+            company=company,
+            selling_price=50000,
+            shopee_item_id=None,
+            shopee_model_id=None,
+        )
+
+        result = ShopeeProductPushService().update_product(product, shop)
+
+        self.assertFalse(result["updated"])
+        self.assertTrue(len(result["errors"]) > 0)
+
+    def test_update_command_creates_success_log(self):
+        shop = ShopeeShopFactory(is_active=True, marketplace=MarketplaceFactory())
+
+        with patch(
+            "apps.omnichannel.vendor.shopee.product_push.ShopeeProductPushService.update_product",
+            return_value={"updated": True, "errors": []},
+        ):
+            from apps.omnichannel.vendor.shopee.management.commands.shopee_update_products import (
+                Command,
+            )
+
+            Command().handle()
+
+        log = ShopeeSyncLog.objects.filter(shop=shop, sync_type="product_update").first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.status, "success")
