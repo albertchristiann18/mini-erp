@@ -109,6 +109,7 @@ class ShopeeOrderSyncer:
             "marketplace_order_id": order_sn,
             "marketplace_order_number": order_sn,
             "status": internal_status,
+            "source_platform": SalesOrder.SourcePlatform.SHOPEE,
             "customer_name": recipient.get("name", ""),
             "customer_phone": recipient.get("phone", ""),
             "shipping_address": recipient.get("full_address", ""),
@@ -127,12 +128,15 @@ class ShopeeOrderSyncer:
         return so
 
     def _find_variant(self, shopee_item: dict) -> Optional[ProductVariant]:
-        """Find our ProductVariant by matching SKU from Shopee item."""
+        """Find our ProductVariant by matching SKU from Shopee item, scoped to this shop's company."""
         # Try model_sku first, then item_sku
         for sku_field in ["model_sku", "item_sku"]:
             sku = shopee_item.get(sku_field, "").strip()
             if sku:
-                variant = ProductVariant.objects.filter(sku_variant_code=sku).first()
+                variant = ProductVariant.objects.filter(
+                    sku_variant_code=sku,
+                    company=self.shop.company,
+                ).first()
                 if variant:
                     return variant
 

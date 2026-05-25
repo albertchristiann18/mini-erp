@@ -107,12 +107,32 @@ class ShopeeShopViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="sync-stock")
     def sync_stock(self, request: Request, pk: str | None = None) -> Response:
         shop = self.get_object()
-        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
+        from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
 
         try:
-            syncer = ShopeeStockSyncer(shop)
-            count = syncer.push_stock_to_shopee()
-            return Response({"updated": count})
+            service = ShopeeStockSyncService()
+            result = service.sync_all_variants(shop)
+            return Response({"updated": result["success"]})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=["post"], url_path="shipping-document")
+    def shipping_document(self, request: Request, pk: str | None = None) -> Response:
+        shop = self.get_object()
+        order_sns = request.data.get("order_sns", [])
+        if not isinstance(order_sns, list) or not order_sns:
+            return Response(
+                {"error": "order_sns must be a non-empty list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from apps.omnichannel.vendor.shopee.client import ShopeeAPIError, ShopeeClient
+
+        try:
+            client = ShopeeClient(shop)
+            result = client.get_shipping_document_result(order_sns)
+            return Response(result)
+        except ShopeeAPIError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

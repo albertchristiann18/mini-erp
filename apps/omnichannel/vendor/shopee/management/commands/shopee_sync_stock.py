@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.omnichannel.vendor.shopee.models import ShopeeShop, ShopeeSyncLog
-from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncer
+from apps.omnichannel.vendor.shopee.stock_sync import ShopeeStockSyncService
 
 
 class Command(BaseCommand):
@@ -14,8 +14,9 @@ class Command(BaseCommand):
         for shop in ShopeeShop.objects.filter(is_active=True):
             log = ShopeeSyncLog.objects.create(shop=shop, sync_type="stock", status="running")
             try:
-                syncer = ShopeeStockSyncer(shop)
-                count = syncer.pull_stock_from_shopee()
+                service = ShopeeStockSyncService()
+                result = service.sync_all_variants(shop)
+                count = result["success"]
                 log.status = "success"
                 log.records_synced = count
                 self.stdout.write(

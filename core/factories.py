@@ -1,7 +1,7 @@
 import factory
 
 from apps.inventory.models import Category, Warehouse
-from core.models import Company, Marketplace
+from core.models import Company, Marketplace, MarketplaceConnection
 
 
 class CompanyFactory(factory.django.DjangoModelFactory):
@@ -37,3 +37,15 @@ class CategoryFactory(factory.django.DjangoModelFactory):
     name = "Test Category"
     category_code = "TEST"
     company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
+
+
+class MarketplaceConnectionFactory(factory.django.DjangoModelFactory):
+    """Factory for creating test MarketplaceConnection instances"""
+
+    class Meta:
+        model = MarketplaceConnection
+
+    company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
+    platform = "SHOPEE"
+    display_name = "Test Shopee Connection"
+    is_active = True

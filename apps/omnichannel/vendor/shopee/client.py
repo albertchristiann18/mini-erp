@@ -158,6 +158,12 @@ class ShopeeClient:
             {"item_id_list": ",".join(str(i) for i in item_id_list)},
         )
 
+    def get_model_list(self, item_id: int) -> dict[str, Any]:
+        return self.get(
+            "/api/v2/product/get_model_list",
+            {"item_id": item_id},
+        )
+
     # ── Backward-compatible wrappers ─────────────────────────────────────────
 
     def get_order_detail(self, order_sn_list: list[str]) -> dict[str, Any]:
@@ -232,4 +238,64 @@ class ShopeeClient:
         return self.get(
             "/api/v2/payment/get_escrow_detail",
             {"order_sn": order_sn},
+        )
+
+    # ── Product push methods ───────────────────────────────────────────
+
+    def get_channel_list(self) -> dict[str, Any]:
+        return self.get("/api/v2/logistics/get_channel_list")
+
+    def upload_image(self, image_file: Any) -> str:
+        """Upload image to Shopee media space. Returns image_id string."""
+        self._ensure_token_fresh()
+        path = "/api/v2/media_space/upload_image"
+        sign, timestamp = self._sign(path)
+        params = {
+            "partner_id": self.shop.partner_id,
+            "shop_id": self.shop.shop_id,
+            "timestamp": timestamp,
+            "access_token": self.shop.access_token,
+            "sign": sign,
+        }
+        url = f"{self.shop.base_url}{path}"
+        resp = requests.post(url, params=params, files={"file": image_file}, timeout=60)
+        if resp.status_code != 200:
+            raise ShopeeAPIError(
+                status_code=resp.status_code, error_code="HTTP_ERROR", message=resp.text
+            )
+        data = resp.json()
+        if data.get("error"):
+            raise ShopeeAPIError(
+                status_code=resp.status_code,
+                error_code=data["error"],
+                message=data.get("message", ""),
+            )
+        return str(cast(dict[str, Any], data.get("response", data)).get("image_id", ""))
+
+    def add_item(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.post("/api/v2/product/add_item", payload)
+
+    def add_model(self, item_id: int, models: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.post("/api/v2/product/add_model", {"item_id": item_id, "model": models})
+
+    def update_item(self, item_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.post("/api/v2/product/update_item", {"item_id": item_id, **payload})
+
+    def update_price(self, item_id: int, price_list: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.post(
+            "/api/v2/product/update_price",
+            {"item_id": item_id, "price_list": price_list},
+        )
+
+    def get_shipping_document_result(
+        self,
+        order_sn_list: list[str],
+        document_type: str = "THERMAL_AIR_WAYBILL",
+    ) -> dict[str, Any]:
+        return self.post(
+            "/api/v2/logistics/get_shipping_document_result",
+            {
+                "order_list": [{"order_sn": sn, "package_number": ""} for sn in order_sn_list],
+                "shipping_document_type": document_type,
+            },
         )

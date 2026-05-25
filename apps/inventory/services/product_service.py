@@ -1,3 +1,5 @@
+import logging
+
 from django.db import transaction
 
 from apps.inventory.models import (
@@ -5,6 +7,8 @@ from apps.inventory.models import (
     ProductVariant,
     ProductVariantMarketplace,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ProductService:
@@ -65,3 +69,72 @@ class ProductService:
                 )
             )
         ProductVariantMarketplace.objects.bulk_create(create_listing_data, batch_size=100)
+
+    def _trigger_shopee_product_update(self, product_id: str) -> None:
+        from apps.inventory.models import Product
+        from apps.omnichannel.vendor.shopee.product_push import ShopeeProductPushService
+        from core.models import MarketplaceConnection
+
+        try:
+            product = Product.objects.select_related("category").get(id=product_id)
+        except Product.DoesNotExist:
+            return
+
+        connections = MarketplaceConnection.objects.filter(
+            platform="SHOPEE",
+            is_active=True,
+            company=product.company,
+        ).select_related("shopee_shop")
+
+        if not connections.exists():
+            return
+
+        service = ShopeeProductPushService()
+        for connection in connections:
+            if not connection.shopee_shop:
+                continue
+            try:
+                service.update_product(product, connection.shopee_shop)
+            except Exception:
+                logger.warning(
+                    "Shopee product update trigger failed for product %s on shop %s",
+                    product_id,
+                    connection.shopee_shop.shop_id,
+                    exc_info=True,
+                )
+
+    def _trigger_shopee_price_update(self, listing_ids: list[str], company_id: str) -> None:
+        from apps.inventory.models import ProductVariantMarketplace
+        from apps.omnichannel.vendor.shopee.product_push import ShopeeProductPushService
+        from core.models import MarketplaceConnection
+
+        connections = MarketplaceConnection.objects.filter(
+            platform="SHOPEE",
+            is_active=True,
+            company_id=company_id,
+        ).select_related("shopee_shop")
+
+        if not connections.exists():
+            return
+
+        service = ShopeeProductPushService()
+        for connection in connections:
+            if not connection.shopee_shop:
+                continue
+            listings = ProductVariantMarketplace.objects.filter(
+                id__in=listing_ids,
+                marketplace=connection.shopee_shop.marketplace,
+                is_active=True,
+                shopee_item_id__isnull=False,
+                shopee_model_id__isnull=False,
+            )
+            for listing in listings:
+                try:
+                    service.update_price_for_listing(listing, connection.shopee_shop)
+                except Exception:
+                    logger.warning(
+                        "Shopee price update trigger failed for listing %s on shop %s",
+                        listing.id,
+                        connection.shopee_shop.shop_id,
+                        exc_info=True,
+                    )

@@ -39,8 +39,11 @@ class SalesOrderViewSet(viewsets.ModelViewSet):
     def get_queryset(self) -> QuerySet[SalesOrder]:
         qs = super().get_queryset()
         status_filter = self.request.query_params.get("status")
+        source_platform_filter = self.request.query_params.get("source_platform")
         if status_filter:
             qs = qs.filter(status=status_filter)
+        if source_platform_filter:
+            qs = qs.filter(source_platform=source_platform_filter)
         return qs  # type: ignore[no-any-return]
 
     def list(self, request: Request, *args: Any, **kwargs: Any) -> Response:
