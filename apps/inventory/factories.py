@@ -42,8 +42,8 @@ class CategoryFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = Category
 
-    name = factory.Sequence(lambda n: f"Test Category {n}")
-    category_code = factory.Sequence(lambda n: f"CAT-{n:04d}")
+    name = factory.Sequence(lambda n: f"Test Category {n}")  # type: ignore[no-untyped-call]
+    category_code = factory.Sequence(lambda n: f"CAT-{n:04d}")  # type: ignore[no-untyped-call]
     company = factory.SubFactory(CompanyFactory)  # type: ignore[no-untyped-call]
 
 
